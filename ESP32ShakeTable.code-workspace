@@ -1,0 +1,26 @@
+{
+    "folders": [
+        {
+            "path": "."
+        }
+    ],
+    "settings": {
+        "files.associations": {
+            "task.h": "c",
+            "esp_log.h": "c",
+            "freertos.h": "c"
+        },
+        "terminal.integrated.profiles.windows": {
+            "ESP_CMD": {
+                "path": "C:\\Windows\\System32\\cmd.exe",
+                "args": [
+                    "/k",
+                    "C:\\Users\\cjulio\\esp\\v5.5.1\\esp-idf\\export.bat"
+                ],
+                "cwd": "C:\\Users\\cjulio\\Documents\\cjulio\\ESP32_ShakeTable"
+            }
+        },
+        "terminal.integrated.defaultProfile.windows": "ESP_CMD",
+        "terminal.integrated.cwd": "C:\\Users\\cjulio\\Documents\\cjulio\\ESP32_ShakeTable"
+    }
+}
