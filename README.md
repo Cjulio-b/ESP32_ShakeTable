@@ -15,3 +15,10 @@ LOGS: https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/
 Documentation: https://docs.espressif.com/projects/esp-idf/en/stable/esp32/index.html
 
 Adafruit Huzzah32 esp32 official documentation: https://cdn-learn.adafruit.com/downloads/pdf/adafruit-huzzah32-esp32-feather.pdf
+
+GIT command line:
+git status
+git add .
+git commit -m "write text"
+git log
+git push
