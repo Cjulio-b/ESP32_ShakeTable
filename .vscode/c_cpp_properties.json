@@ -4,7 +4,8 @@
             "name": "Win32",
             "includePath": [
                 "${workspaceFolder}/**",
-                "C:/Users/cjulio/esp/**"
+                "C:/Users/cjulio/esp/**",
+                "C:/Users/cjulio/esp/v5.5.1/esp-idf/components/esp_driver_gpio/include"
             ],
             "defines": [
                 "_DEBUG",

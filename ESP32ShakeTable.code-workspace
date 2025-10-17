@@ -8,7 +8,8 @@
         "files.associations": {
             "task.h": "c",
             "esp_log.h": "c",
-            "freertos.h": "c"
+            "freertos.h": "c",
+            "gpio.h": "c"
         },
         "terminal.integrated.profiles.windows": {
             "ESP_CMD": {
