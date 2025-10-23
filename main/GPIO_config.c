@@ -30,14 +30,14 @@ void testing_led(void)
 	{
 		//printf("Button Pressed!\n");
 		gpio_set_level(GPIO_NUM_26, 0); // Turn LED on
-		vTaskDelay(pdMS_TO_TICKS(10));
+		vTaskDelay(pdMS_TO_TICKS(10)); // 10ms delay
 
 	}
 	else
 	{
 		//printf("Button Released!\n");
 		gpio_set_level(GPIO_NUM_26, 1); // Turn LED OFF
-		vTaskDelay(pdMS_TO_TICKS(10));
+		vTaskDelay(pdMS_TO_TICKS(10)); // 10ms delay
 	}
     
 }

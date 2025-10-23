@@ -7,12 +7,14 @@
 #include "functions.h"
 #include "driver/gpio.h"
 
-static const char* TAG = "MyModule";
+static const char* TAG = "ESP32_ShakeTable";
 
 void app_main(void)
 {
 	GPIO_init(); //initialize GPIOs
 	check_current_config(); //print GPIO configuration
+	start_wifi_ap(); //start Wi-Fi
+	start_webserver(); //start HTTP server
 
 	printf("Hello, this is ESP32 Speaking!\n");
 	ESP_LOGI(TAG, "msg: Hello\n");
@@ -25,7 +27,7 @@ void app_main(void)
 	while (1)
 	{	
 		testing_led();
-		//vTaskDelay(pdMS_TO_TICKS(5000)); // Delay de 5 segundos
+		//vTaskDelay(pdMS_TO_TICKS(10)); // Delay de 10ms
 	}
 
 }
