@@ -21,3 +21,8 @@ GIT command line:
     git commit -m "write text"
     git log //then press "q" to quit
     git push
+
+NETXION:
+    Instruction Set: https://nextion.tech/instruction-set/#s3
+                     https://nextion.tech/instruction-set/
+    Editor Guide: https://nextion.tech/editor_guide/

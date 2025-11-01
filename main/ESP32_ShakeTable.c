@@ -8,13 +8,15 @@
 #include "driver/gpio.h"
 
 static const char* TAG = "ESP32_ShakeTable";
+#define UART_TASK_STACK_SIZE 4096
 
 void app_main(void)
 {
 	GPIO_init(); //initialize GPIOs
 	check_current_config(); //print GPIO configuration
-	start_wifi_ap(); //start Wi-Fi
-	start_webserver(); //start HTTP server
+	init_uart();
+	//start_wifi_ap(); //start Wi-Fi
+	//start_webserver(); //start HTTP server
 
 	printf("Hello, this is ESP32 Speaking!\n");
 	ESP_LOGI(TAG, "msg: Hello\n");
@@ -27,6 +29,12 @@ void app_main(void)
 	while (1)
 	{	
 		testing_led();
+		xTaskCreate(rx_task, "uart_rx_task", UART_TASK_STACK_SIZE, NULL, configMAX_PRIORITIES - 15, NULL);
+		xTaskCreate(tx_task, "uart_tx_task", UART_TASK_STACK_SIZE, NULL, configMAX_PRIORITIES - 16, NULL);
+		// Task para monitorizar o uso de stack
+    	xTaskCreate(monitor_task, "monitor_task", 4096, NULL, configMAX_PRIORITIES - 20, NULL);
+		
+		
 		//vTaskDelay(pdMS_TO_TICKS(10)); // Delay de 10ms
 	}
 

@@ -9,9 +9,20 @@
 void check_current_config(void);
 void testing_led(void);
 void GPIO_init(void);
+
+// WIFI - HTTP Server functions ----------------------------------
 void start_wifi_ap(void);
 esp_err_t gpio_handler(httpd_req_t *req);
 httpd_handle_t start_webserver(void);
+
+// UART functions -----------------------------------------------
+void init_uart(void);
+int sendData(const char* logName, const char* data);
+void nextion_send_command(const char *cmd);
+void rx_task(void *arg);
+void tx_task(void *arg);
+void monitor_task(void *arg);
+
 
 
 #endif /* MAIN_FUNCTIONS_H_ */
