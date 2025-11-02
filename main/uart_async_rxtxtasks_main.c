@@ -14,6 +14,7 @@
 #include "driver/uart.h"
 #include "string.h"
 #include "driver/gpio.h"
+#include "functions.h"
 
 static const int RX_BUF_SIZE = 1024;
 static const char* TAG = "UART_ASYNC";
@@ -50,7 +51,7 @@ int sendData(const char* logName, const char* data)
     return txBytes;
 }
 
-void nextion_send_command(const char *cmd)
+/* void nextion_send_command(const char *cmd)
 {
     uart_write_bytes(UART_PORT, cmd, strlen(cmd));
     const uint8_t end[3] = {0xFF, 0xFF, 0xFF};
@@ -63,7 +64,7 @@ void nextion_send_data_point(uint8_t channel, uint8_t value)
     char cmd[32];
     snprintf(cmd, sizeof(cmd), "addt 1,%d,%d", channel, value);
     nextion_send_command(cmd);
-}
+} */
 
 
 // --- RX and TX tasks
@@ -72,25 +73,11 @@ void tx_task(void *arg)
     static const char *TX_TASK_TAG = "TX_TASK";
     esp_log_level_set(TX_TASK_TAG, ESP_LOG_INFO);
     while (1) {
-        sendData(TX_TASK_TAG, "Hello world");
+        sendData(TX_TASK_TAG, "t0.txt=\"Hello world\"");
         vTaskDelay(2000 / portTICK_PERIOD_MS);
         
-        nextion_send_command("t0.txt=\"Huzzah32 Online\"");
-        vTaskDelay(pdMS_TO_TICKS(2000));
-
-        nextion_send_command("n0.val=123");
-        vTaskDelay(pdMS_TO_TICKS(2000));
-
-        nextion_send_command("n0.val=0x23");
-        vTaskDelay(pdMS_TO_TICKS(2000));
-
-        nextion_send_command("x0.val=1.5");
-        vTaskDelay(pdMS_TO_TICKS(2000));
-
-        nextion_send_command("addt 6,0,random(0,255)");
-        vTaskDelay(pdMS_TO_TICKS(2000));
-
-        
+        txToNextion();
+        vTaskDelay(2000 / portTICK_PERIOD_MS);
     }
 }
 
@@ -105,15 +92,15 @@ void rx_task(void *arg)
             data[rxBytes] = 0;
             ESP_LOGI(RX_TASK_TAG, "Read %d bytes: '%s'", rxBytes, data);
             ESP_LOG_BUFFER_HEXDUMP(RX_TASK_TAG, data, rxBytes, ESP_LOG_INFO);
-            
-            if (strstr((char *)data, "B0rel")) {
+            rxFromNextion(data, rxBytes);
+/*             if (strstr((char *)data, "B0rel")) {
                 ESP_LOGI("RX_TASK", "Botão b0 largado!");
                 nextion_send_command("g0.txt=\"Botão b0 OFF\"");
             }
             if (strstr((char *)data, "B0press")) {
                 ESP_LOGI("RX_TASK", "Botão b0 pressionado!");
                 nextion_send_command("g0.txt=\"Botão b0 ON\"");
-            } 
+            }  */
         }
     }
     free(data);
