@@ -23,6 +23,7 @@ static const char* TAG = "UART_ASYNC";
 #define RXD_PIN (16)
 #define UART_BAUD_RATE (9600)
 #define UART_PORT UART_NUM_1
+#define DEBUG_UART // ativar apenas para debug, comentar para desativar
 
 void init_uart(void)
 {
@@ -42,7 +43,7 @@ void init_uart(void)
     ESP_LOGI(TAG, "Nextion initialized on UART%d (TX=%d, RX=%d, %d baud)",
              UART_PORT, TXD_PIN, RXD_PIN , UART_BAUD_RATE);    
 }
-// testar as duas versoes "sendData" e "nextion_send_command"
+
 int sendData(const char* logName, const char* data)
 {
     const int len = strlen(data);
@@ -50,22 +51,6 @@ int sendData(const char* logName, const char* data)
     ESP_LOGI(logName, "Wrote %d bytes", txBytes);
     return txBytes;
 }
-
-/* void nextion_send_command(const char *cmd)
-{
-    uart_write_bytes(UART_PORT, cmd, strlen(cmd));
-    const uint8_t end[3] = {0xFF, 0xFF, 0xFF};
-    uart_write_bytes(UART_PORT, (const char *)end, 3);
-    ESP_LOGI("NEXTION", "Sent: %s", cmd);
-}
-
-void nextion_send_data_point(uint8_t channel, uint8_t value)
-{
-    char cmd[32];
-    snprintf(cmd, sizeof(cmd), "addt 1,%d,%d", channel, value);
-    nextion_send_command(cmd);
-} */
-
 
 // --- RX and TX tasks
 void tx_task(void *arg)
@@ -91,16 +76,10 @@ void rx_task(void *arg)
         if (rxBytes > 0) {
             data[rxBytes] = 0;
             ESP_LOGI(RX_TASK_TAG, "Read %d bytes: '%s'", rxBytes, data);
-            ESP_LOG_BUFFER_HEXDUMP(RX_TASK_TAG, data, rxBytes, ESP_LOG_INFO);
-            rxFromNextion(data, rxBytes);
-/*             if (strstr((char *)data, "B0rel")) {
-                ESP_LOGI("RX_TASK", "Botão b0 largado!");
-                nextion_send_command("g0.txt=\"Botão b0 OFF\"");
-            }
-            if (strstr((char *)data, "B0press")) {
-                ESP_LOGI("RX_TASK", "Botão b0 pressionado!");
-                nextion_send_command("g0.txt=\"Botão b0 ON\"");
-            }  */
+            #ifdef DEBUG_UART 
+                ESP_LOG_BUFFER_HEXDUMP(RX_TASK_TAG, data, rxBytes, ESP_LOG_INFO);
+            #endif
+                rxFromNextion(data, rxBytes);
         }
     }
     free(data);

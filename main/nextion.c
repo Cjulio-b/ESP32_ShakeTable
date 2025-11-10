@@ -61,10 +61,10 @@ void rxFromNextion(const uint8_t *data, int len)
 
                 if (component_id == 5 && event == 1) { // botão b0 press
                     ESP_LOGI("NEXTION", "Botão B0 pressionado!");
-                    nextion_send_command("g0.txt=\"b0 ON\"");
+                    nextion_send_command("g0.txt=\"b0 on\"");
                 } else if (component_id == 5 && event == 0) { // botão b0 release
                     ESP_LOGI("NEXTION", "Botão B0 libertado!");
-                    nextion_send_command("g0.txt=\"b0 not\"");
+                    nextion_send_command("g0.txt=\"b0 off\"");
                 }
             }
             // End Touch Event (0x65) -------------------------------------------------------------

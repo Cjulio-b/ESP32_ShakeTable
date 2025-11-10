@@ -9,6 +9,8 @@
 
 static const char* TAG = "ESP32_ShakeTable";
 #define UART_TASK_STACK_SIZE 4096
+extern TaskHandle_t rxTaskHandle;
+extern TaskHandle_t txTaskHandle;
 
 void app_main(void)
 {
@@ -26,16 +28,15 @@ void app_main(void)
 	
 	vTaskDelay(pdMS_TO_TICKS(3000)); // Delay de 3 segundos
 
+	xTaskCreate(rx_task, "uart_rx_task", UART_TASK_STACK_SIZE, NULL, configMAX_PRIORITIES - 15, &rxTaskHandle);
+	xTaskCreate(tx_task, "uart_tx_task", UART_TASK_STACK_SIZE, NULL, configMAX_PRIORITIES - 16, &txTaskHandle);
+	// Task para monitorizar o uso de stack
+    xTaskCreate(monitor_task, "monitor_task", 4096, NULL, configMAX_PRIORITIES - 20, NULL);
+
 	while (1)
 	{	
 		testing_led();
-		xTaskCreate(rx_task, "uart_rx_task", UART_TASK_STACK_SIZE, NULL, configMAX_PRIORITIES - 15, NULL);
-		xTaskCreate(tx_task, "uart_tx_task", UART_TASK_STACK_SIZE, NULL, configMAX_PRIORITIES - 16, NULL);
-		// Task para monitorizar o uso de stack
-    	xTaskCreate(monitor_task, "monitor_task", 4096, NULL, configMAX_PRIORITIES - 20, NULL);
-		
-		
-		//vTaskDelay(pdMS_TO_TICKS(10)); // Delay de 10ms
+		vTaskDelay(pdMS_TO_TICKS(10)); // Delay de 10ms
 	}
 
 }
