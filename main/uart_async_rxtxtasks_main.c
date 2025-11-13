@@ -18,6 +18,7 @@
 
 static const int RX_BUF_SIZE = 1024;
 static const char* TAG = "UART_ASYNC";
+bool MonitorTask = false;
 
 #define TXD_PIN (17)
 #define RXD_PIN (16)
@@ -58,11 +59,11 @@ void tx_task(void *arg)
     static const char *TX_TASK_TAG = "TX_TASK";
     esp_log_level_set(TX_TASK_TAG, ESP_LOG_INFO);
     while (1) {
-        sendData(TX_TASK_TAG, "t0.txt=\"Hello world\"");
-        vTaskDelay(2000 / portTICK_PERIOD_MS);
-        
+/*      sendData(TX_TASK_TAG, "t0.txt=\"Hello world\"");
+        vTaskDelay(2000 / portTICK_PERIOD_MS); */
+
         txToNextion();
-        vTaskDelay(2000 / portTICK_PERIOD_MS);
+        vTaskDelay(500 / portTICK_PERIOD_MS); // Envia a cada 500ms
     }
 }
 
@@ -91,12 +92,15 @@ TaskHandle_t txTaskHandle = NULL;
 void monitor_task(void *arg)
 {
     while (1) {
-        UBaseType_t rx_stack = uxTaskGetStackHighWaterMark(rxTaskHandle);
-        UBaseType_t tx_stack = uxTaskGetStackHighWaterMark(txTaskHandle);
+        if (MonitorTask) {
+            UBaseType_t rx_stack = uxTaskGetStackHighWaterMark(rxTaskHandle);
+            UBaseType_t tx_stack = uxTaskGetStackHighWaterMark(txTaskHandle);
 
-        ESP_LOGI("STACK_MON", "RX task stack min free: %u bytes", rx_stack * 4);
-        ESP_LOGI("STACK_MON", "TX task stack min free: %u bytes", tx_stack * 4);
+            ESP_LOGI("STACK_MON", "RX task stack min free: %u bytes", rx_stack * 4);
+            ESP_LOGI("STACK_MON", "TX task stack min free: %u bytes", tx_stack * 4);
 
-        vTaskDelay(pdMS_TO_TICKS(5000)); // atualiza a cada 5 segundos
+            MonitorTask = false;
+        }
+        vTaskDelay(pdMS_TO_TICKS(500)); // atualiza a cada 0,5 segundos
     }
 }

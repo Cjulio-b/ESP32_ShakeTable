@@ -5,6 +5,23 @@
 #define NEXTION_TERMINATOR 0xFF
 #define NEXTION_MAX_LEN 64
 
+extern bool MonitorTask;
+
+// CRC-16 Modbus (polinómio 0xA001, inicial 0xFFFF)
+uint16_t nextion_crc16_modbus(const uint8_t *data, size_t len) {
+    uint16_t crc = 0xFFFF;
+    for (size_t pos = 0; pos < len; pos++) {
+        crc ^= (uint16_t)data[pos];
+        for (int i = 0; i < 8; i++) {
+            if (crc & 0x0001)
+                crc = (crc >> 1) ^ 0xA001;
+            else
+                crc >>= 1;
+        }
+    }
+    return crc;
+}
+
 void nextion_send_command(const char *cmd)
 {
     uart_write_bytes(UART_PORT, cmd, strlen(cmd));
@@ -30,6 +47,31 @@ void nextion_send_data_point(uint8_t channel, uint8_t value)
     snprintf(cmd, sizeof(cmd), "addt 1,%d,%d", channel, value);
     nextion_send_command(cmd);
 }
+
+void sendAckToNextion(bool ok)
+{
+    if(ok){
+        nextion_send_command("va0.val=160"); // ACK OK (0xA0)
+    }
+    else{
+        nextion_send_command("va0.val=161"); // ACK ERROR (0xA1)
+        ESP_LOGW("NEXTION", "↩️ Pedido de retransmissão enviado");
+    }
+}
+
+void return_data_from_nextion(const uint8_t *buff, int idx)
+{
+    if (idx >= 4 && buff[0] == 0x1A &&
+        buff[1] == 0xFF && buff[2] == 0xFF && buff[3] == 0xFF)
+    {
+        ESP_LOGW("NEXTION", "Invalid Variable name or invalid attribute was used");
+    }
+    else
+    {
+        ESP_LOGI("NEXTION", "Received unknown packet (len=%d)", idx);
+    }
+}
+
 
 void rxFromNextion(const uint8_t *data, int len)
 {
@@ -67,7 +109,7 @@ void rxFromNextion(const uint8_t *data, int len)
                     nextion_send_command("g0.txt=\"b0 off\"");
                 }
             }
-            // End Touch Event (0x65) -------------------------------------------------------------
+            /*// End Touch Event (0x65) -------------------------------------------------------------
             
             // ---- PARTE 2: texto adicional ("B0press"/"B0rel") ----
             buffer[index - 3] = '\0'; // remove terminador
@@ -76,6 +118,34 @@ void rxFromNextion(const uint8_t *data, int len)
                 vTaskDelay(pdMS_TO_TICKS(100));
             } else if (strstr((char *)buffer, "B0rel")) {
                 ESP_LOGI("NEXTION", "Botão B0 libertado (via texto)!");
+            }*/
+            
+            // Custom Data Packet (0x55) -------------------------------------------------------------
+            // Example: 55 01 F4 01 FA 00 32 00 23 00 63 76 FF FF FF
+            // 55 - Custom Send Event ; 01 - Type of Data (Ex: Parameters) ; F4 01 - Frequency (5.00Hz) ; FA 00 - Velocity (2.50) ; 32 00 - Acc Tranversal (0.50G) ; 23 00 - Temp (0.35s) ; 63 76 - CRC16 ; FF FF FF - Terminator
+            else if (buffer[0] == 0x55 && buffer[1] == 0x01) {
+                uint16_t freq = buffer[2] | (buffer[3] << 8);
+                uint16_t vel  = buffer[4] | (buffer[5] << 8);
+                uint16_t acc  = buffer[6] | (buffer[7] << 8);
+                uint16_t tmp  = buffer[8] | (buffer[9] << 8);
+                uint16_t recv_crc = buffer[10] | (buffer[11] << 8);
+
+                uint8_t payload[] = {buffer[2],buffer[3],buffer[4],buffer[5],buffer[6],buffer[7],buffer[8],buffer[9]};
+                uint16_t calc_crc = nextion_crc16_modbus(payload, sizeof(payload));
+
+                if (recv_crc == calc_crc) {
+                    ESP_LOGI("NEXTION", "✅ CRC OK - F=%.2fHz V=%.2fm/s AccT=%.2fs Tmp=%.2fs",
+                            freq/100.0, vel/100.0, acc/100.0, tmp/100.0);
+                    sendAckToNextion(true);
+                    MonitorTask = true; // ativa monitorização de stack
+                } else {
+                    ESP_LOGW("NEXTION", "❌ CRC inválido (esperado 0x%04X, recebido 0x%04X)", calc_crc, recv_crc);
+                    sendAckToNextion(false);
+                }
+            }
+            else
+            {
+                return_data_from_nextion(buffer, index);
             }
             index = 0; // reset buffer
         }
@@ -88,7 +158,7 @@ void rxFromNextion(const uint8_t *data, int len)
 
 void txToNextion(void)
 {
-    nextion_send_command("t0.txt=\"Huzzah32 Online\"");
+/*  nextion_send_command("t0.txt=\"Huzzah32 Online\"");
     vTaskDelay(pdMS_TO_TICKS(2000));
 
     nextion_send_command("n0.val=123");
@@ -104,5 +174,7 @@ void txToNextion(void)
     vTaskDelay(pdMS_TO_TICKS(2000));
 
     nextion_send_command("addt 6,0,(randset 0,100)");
-    vTaskDelay(pdMS_TO_TICKS(2000));
+    vTaskDelay(pdMS_TO_TICKS(2000)); */
+
+    vTaskDelay(pdMS_TO_TICKS(1000));
 }

@@ -6,6 +6,10 @@
 #include "esp_err.h"          // Para o tipo esp_err_t
 #include "esp_http_server.h"  // Para httpd_req_t e httpd_handle_t
 
+// GLOBAL Variables -----------------------------------
+extern bool MonitorTask;
+
+// GPIO functions ---------------------------------------
 void check_current_config(void);
 void testing_led(void);
 void GPIO_init(void);
@@ -28,6 +32,8 @@ void nextion_send_data_point(uint8_t channel, uint8_t value);
 void rxFromNextion(const uint8_t *data, int len);
 void txToNextion(void);
 void nextion_cmd_syntax(const char *objname, const char *datatype, const char *value);
-
+uint16_t nextion_crc16_modbus(const uint8_t *data, size_t len);
+void sendAckToNextion(bool ok);
+void return_data_from_nextion(const uint8_t *buff, int idx);
 
 #endif /* MAIN_FUNCTIONS_H_ */
