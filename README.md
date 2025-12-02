@@ -26,3 +26,10 @@ NETXION:
     Instruction Set: https://nextion.tech/instruction-set/#s3
                      https://nextion.tech/instruction-set/
     Editor Guide: https://nextion.tech/editor_guide/
+
+Notas para fazer mais tarde:
+1. Ver chatgpt, conversa "Escolher exemplo UART" sugestao de separaçao de erros e outros return datas do Nextion de forma estrutura. Isto existe em principio restruturar a parte que está criada no rxFromNextion para o Touch Event
+2. Driver L298N pode ser inapropriado para o projeto, ver alternativas como: TOP 1: DRV8825 ou TOP 2: TMC2208 / TMC2209 / TMC2225 ou TOP 3: TB6600/TB67S109 
+3. Trocar PINOUTS do codigo stepper_basic_test - OK!!
+4. ver video: https://www.youtube.com/watch?v=Bb0Qfj1jdPQ
+5. Testes feito na funçao "testing_led" do GPIO_config.c manualmente e com funçao "step_motor" do stepper_basic_test.c

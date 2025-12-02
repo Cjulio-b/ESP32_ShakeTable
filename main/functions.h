@@ -36,4 +36,7 @@ uint16_t nextion_crc16_modbus(const uint8_t *data, size_t len);
 void sendAckToNextion(bool ok);
 void return_data_from_nextion(const uint8_t *buff, int idx);
 
+// STEPPER MOTOR functions -----------------------------------------------
+void step_motor(bool direction);
+
 #endif /* MAIN_FUNCTIONS_H_ */
