@@ -37,10 +37,6 @@ void app_main(void)
 	{	
 		testing_led();
 		vTaskDelay(pdMS_TO_TICKS(10)); // Delay de 10ms
-/* 		step_motor(1);
-		vTaskDelay(pdMS_TO_TICKS(5000)); // Delay de 1s
-		step_motor(0);
-		vTaskDelay(pdMS_TO_TICKS(1000)); // Delay de 1s */
 	}
 
 }
