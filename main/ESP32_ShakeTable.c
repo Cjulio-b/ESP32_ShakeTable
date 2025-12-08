@@ -6,6 +6,7 @@
 #include "freertos/task.h"
 #include "functions.h"
 #include "driver/gpio.h"
+#include "l298n_stepper.h"
 
 static const char* TAG = "ESP32_ShakeTable";
 #define UART_TASK_STACK_SIZE 4096
@@ -19,6 +20,11 @@ void app_main(void)
 	init_uart();
 	//start_wifi_ap(); //start Wi-Fi
 	//start_webserver(); //start HTTP server
+	// (1/2) --- Teste do stepper motor L298N half-step ------
+    ESP_LOGI("STEPMOTOR", "Initializing L298N and stepper motor...");
+    l298n_init();
+    l298n_set_min_step_us(1000);  // segura para a maioria dos NEMA17
+	// (2/2) --- Teste do stepper motor L298N half-step ------
 
 	printf("Hello, this is ESP32 Speaking!\n");
 	ESP_LOGI(TAG, "msg: Hello\n");
@@ -32,6 +38,9 @@ void app_main(void)
 	xTaskCreate(tx_task, "uart_tx_task", UART_TASK_STACK_SIZE, NULL, configMAX_PRIORITIES - 16, &txTaskHandle);
 	// Task para monitorizar o uso de stack
     xTaskCreate(monitor_task, "monitor_task", 4096, NULL, configMAX_PRIORITIES - 20, NULL);
+
+	// Task para controlar o stepper motor L298N
+	//xTaskCreate(stepper_task, "stepper_task", 4096, NULL, configMAX_PRIORITIES - 14, NULL);
 
 	while (1)
 	{	

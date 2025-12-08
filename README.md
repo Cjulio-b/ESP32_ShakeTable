@@ -33,3 +33,13 @@ Notas para fazer mais tarde:
 3. Trocar PINOUTS do codigo stepper_basic_test - OK!!
 4. ver video: https://www.youtube.com/watch?v=Bb0Qfj1jdPQ
 5. Testes feito na funçao "testing_led" do GPIO_config.c manualmente e com funçao "step_motor" do stepper_basic_test.c
+6. Ler documentacao sobre RMT para entender o conceito: https://docs.espressif.com/projects/esp-idf/en/stable/esp32h2/api-reference/peripherals/rmt.html
+(nota: o proprio readme.md de como usar o codigo stepper_motor_main_example.c tem explicacao de como usar)
+7. Motores de pesquisa academicos: https://scholar.google.com/ and https://ieeexplore.ieee.org/Xplore/guesthome.jsp;jsessionid=D5B2BFACF2DA399E2D5B67D7B38060B3
+8. Videos diferença entre Stepper motor NEMA 17, 23 e 34: https://www.youtube.com/watch?v=8wff-IcBTVo
+9. Qual é velocidade máxima stepper motor? https://www.youtube.com/watch?v=E7gTkXXCiaQ
+
+
+
+
+

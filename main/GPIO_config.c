@@ -4,6 +4,7 @@
 #include "freertos/task.h"
 #include "driver/gpio.h"
 #include "stdio.h"
+#include "rom/ets_sys.h" // ets_delay_us
 
 extern void step_motor(bool direction);
 
@@ -40,17 +41,19 @@ void testing_led(void)
 		//step_motor(true); // Step motor in one direction
 		printf("Stepper Motor - Wave Drive mode...\n");
 		// One fase is activated at a time - Step angle is large, rotation not smooth and torque low
-		for(int i=0; i<200; i++){
+		for(int i=0; i<1000; i++){
 			gpio_set_level(GPIO_NUM_13, 1);	// A_IN1
 			gpio_set_level(GPIO_NUM_12, 0);	// A_IN2
 			gpio_set_level(GPIO_NUM_27, 1);	// B_IN1
 			gpio_set_level(GPIO_NUM_33, 0);	// B_IN2
-			vTaskDelay(pdMS_TO_TICKS(50)); // 0,5s delay
+			//vTaskDelay(pdMS_TO_TICKS(50)); // 0,5s delay
+			ets_delay_us(1000); // 1ms delay
 			gpio_set_level(GPIO_NUM_13, 0);	// A_IN1
 			gpio_set_level(GPIO_NUM_12, 1);	// A_IN2
 			gpio_set_level(GPIO_NUM_27, 0);	// B_IN1
 			gpio_set_level(GPIO_NUM_33, 1);	// B_IN2
-			vTaskDelay(pdMS_TO_TICKS(50)); // 0,5s delay
+			//vTaskDelay(pdMS_TO_TICKS(50)); // 0,5s delay
+			ets_delay_us(1000); // 1ms delay
 		}
 		vTaskDelay(pdMS_TO_TICKS(1000)); // 1s delay
 		printf("Stepper Motor - FULL Step mode...\n");
@@ -59,75 +62,87 @@ void testing_led(void)
 		gpio_set_level(GPIO_NUM_27, 0);	// B_IN1
 		gpio_set_level(GPIO_NUM_33, 0);	// B_IN2
 		// Two fases are activated at a time - Average of the coils, torque is higher.
-		for(int i=0; i<200; i++){
+		for(int i=0; i<1000; i++){
 			gpio_set_level(GPIO_NUM_13, 1);	// A_IN1
 			gpio_set_level(GPIO_NUM_12, 0);	// A_IN2
 			gpio_set_level(GPIO_NUM_27, 1);	// B_IN1
 			gpio_set_level(GPIO_NUM_33, 0);	// B_IN2
-			vTaskDelay(pdMS_TO_TICKS(50)); // 0,5s delay
+			//vTaskDelay(pdMS_TO_TICKS(50)); // 0,5s delay
+			ets_delay_us(1000); // 1ms delay
 			gpio_set_level(GPIO_NUM_13, 0);	// A_IN1
 			gpio_set_level(GPIO_NUM_12, 1);	// A_IN2
 			gpio_set_level(GPIO_NUM_27, 1);	// B_IN1
 			gpio_set_level(GPIO_NUM_33, 0);	// B_IN2
-			vTaskDelay(pdMS_TO_TICKS(50)); // 0,5s delay
+			//vTaskDelay(pdMS_TO_TICKS(50)); // 0,5s delay
+			ets_delay_us(1000); // 1ms delay
 			gpio_set_level(GPIO_NUM_13, 0);	// A_IN1
 			gpio_set_level(GPIO_NUM_12, 1);	// A_IN2
 			gpio_set_level(GPIO_NUM_27, 0);	// B_IN1
 			gpio_set_level(GPIO_NUM_33, 1);	// B_IN2
-			vTaskDelay(pdMS_TO_TICKS(50)); // 0,5s delay
+			//vTaskDelay(pdMS_TO_TICKS(50)); // 0,5s delay
+			ets_delay_us(1000); // 1ms delay
 			gpio_set_level(GPIO_NUM_13, 1);	// A_IN1
 			gpio_set_level(GPIO_NUM_12, 0);	// A_IN2
 			gpio_set_level(GPIO_NUM_27, 0);	// B_IN1
 			gpio_set_level(GPIO_NUM_33, 1);	// B_IN2
-			vTaskDelay(pdMS_TO_TICKS(50)); // 0,5s delay
+			//vTaskDelay(pdMS_TO_TICKS(50)); // 0,5s delay
+			ets_delay_us(1000); // 1ms delay
 		}
 		vTaskDelay(pdMS_TO_TICKS(1000)); // 1s delay
 		printf("Stepper Motor - HALF Step mode...\n");
 		// Alternates between one and two fases activated - Step angle is smaller, rotation is smoother, torque very good
-		for(int i=0; i<100; i++){
+		for(int i=0; i<200; i++){
 			gpio_set_level(GPIO_NUM_13, 1);	// A_IN1
 			gpio_set_level(GPIO_NUM_12, 0);	// A_IN2
 			gpio_set_level(GPIO_NUM_27, 0);	// B_IN1
 			gpio_set_level(GPIO_NUM_33, 0);	// B_IN2
-			vTaskDelay(pdMS_TO_TICKS(50)); // 0,5s delay
+			//vTaskDelay(pdMS_TO_TICKS(50)); // 0,5s delay
+			ets_delay_us(1000); // 1ms delay
 			gpio_set_level(GPIO_NUM_13, 1);	// A_IN1
 			gpio_set_level(GPIO_NUM_12, 0);	// A_IN2
 			gpio_set_level(GPIO_NUM_27, 1);	// B_IN1
 			gpio_set_level(GPIO_NUM_33, 0);	// B_IN2
-			vTaskDelay(pdMS_TO_TICKS(50)); // 0,5s delay
+			//vTaskDelay(pdMS_TO_TICKS(50)); // 0,5s delay
+			ets_delay_us(1000); // 1ms delay
 			gpio_set_level(GPIO_NUM_13, 0);	// A_IN1
 			gpio_set_level(GPIO_NUM_12, 0);	// A_IN2
 			gpio_set_level(GPIO_NUM_27, 1);	// B_IN1
 			gpio_set_level(GPIO_NUM_33, 0);	// B_IN2
-			vTaskDelay(pdMS_TO_TICKS(50)); // 0,5s delay
+			//vTaskDelay(pdMS_TO_TICKS(50)); // 0,5s delay
+			ets_delay_us(1000); // 1ms delay
 			gpio_set_level(GPIO_NUM_13, 0);	// A_IN1
 			gpio_set_level(GPIO_NUM_12, 1);	// A_IN2
 			gpio_set_level(GPIO_NUM_27, 1);	// B_IN1
 			gpio_set_level(GPIO_NUM_33, 0);	// B_IN2
-			vTaskDelay(pdMS_TO_TICKS(50)); // 0,5s delay
+			//vTaskDelay(pdMS_TO_TICKS(50)); // 0,5s delay
+			ets_delay_us(1000); // 1ms delay
 			gpio_set_level(GPIO_NUM_13, 0);	// A_IN1
 			gpio_set_level(GPIO_NUM_12, 1);	// A_IN2
 			gpio_set_level(GPIO_NUM_27, 0);	// B_IN1
 			gpio_set_level(GPIO_NUM_33, 0);	// B_IN2
-			vTaskDelay(pdMS_TO_TICKS(50)); // 0,5s delay
+			//vTaskDelay(pdMS_TO_TICKS(50)); // 0,5s delay
+			ets_delay_us(1000); // 1ms delay
 			gpio_set_level(GPIO_NUM_13, 0);	// A_IN1
 			gpio_set_level(GPIO_NUM_12, 1);	// A_IN2
 			gpio_set_level(GPIO_NUM_27, 0);	// B_IN1
 			gpio_set_level(GPIO_NUM_33, 1);	// B_IN2
-			vTaskDelay(pdMS_TO_TICKS(50)); // 0,5s delay
+			//vTaskDelay(pdMS_TO_TICKS(50)); // 0,5s delay
+			ets_delay_us(1000); // 1ms delay
 			gpio_set_level(GPIO_NUM_13, 0);	// A_IN1
 			gpio_set_level(GPIO_NUM_12, 0);	// A_IN2
 			gpio_set_level(GPIO_NUM_27, 0);	// B_IN1
 			gpio_set_level(GPIO_NUM_33, 1);	// B_IN2
-			vTaskDelay(pdMS_TO_TICKS(50)); // 0,5s delay	
+			//vTaskDelay(pdMS_TO_TICKS(50)); // 0,5s delay
+			ets_delay_us(1000); // 1ms delay	
 			gpio_set_level(GPIO_NUM_13, 1);	// A_IN1
 			gpio_set_level(GPIO_NUM_12, 0);	// A_IN2
 			gpio_set_level(GPIO_NUM_27, 0);	// B_IN1
 			gpio_set_level(GPIO_NUM_33, 1);	// B_IN2
-			vTaskDelay(pdMS_TO_TICKS(50)); // 0,5s delay		
+			//vTaskDelay(pdMS_TO_TICKS(50)); // 0,5s delay
+			ets_delay_us(1000); // 1ms delay		
 		}
 		vTaskDelay(pdMS_TO_TICKS(1000)); // 1s delay
-		printf("Stepper Motor - Micro step mode...\n");
+		printf("Stepper Motor - Micro step mode... (Not working)\n");
 		gpio_set_level(GPIO_NUM_13, 0);	// A_IN1
 	    gpio_set_level(GPIO_NUM_12, 0);	// A_IN2
 		gpio_set_level(GPIO_NUM_27, 0);	// B_IN1
