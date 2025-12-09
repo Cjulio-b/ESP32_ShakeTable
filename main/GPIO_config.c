@@ -192,8 +192,11 @@ void GPIO_init(void)
     /* Configure GPIOs as needed */
 
     //INPUT GPIO
-    gpio_set_direction(GPIO_NUM_21, GPIO_MODE_INPUT); 
+    gpio_set_direction(GPIO_NUM_21, GPIO_MODE_INPUT);  // Button LED
 	gpio_set_pull_mode(GPIO_NUM_21, GPIO_PULLUP_ONLY); // Enable pull-up resistor
+
+	gpio_set_direction(GPIO_NUM_14, GPIO_MODE_INPUT); // Button Stepper Motor
+	gpio_set_pull_mode(GPIO_NUM_14, GPIO_PULLUP_ONLY); // Enable pull-up resistor
 		
 	//OUTPUT GPIOs
 	gpio_set_direction(GPIO_NUM_26, GPIO_MODE_OUTPUT);

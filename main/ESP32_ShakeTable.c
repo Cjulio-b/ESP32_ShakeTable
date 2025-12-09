@@ -40,7 +40,7 @@ void app_main(void)
     xTaskCreate(monitor_task, "monitor_task", 4096, NULL, configMAX_PRIORITIES - 20, NULL);
 
 	// Task para controlar o stepper motor L298N
-	//xTaskCreate(stepper_task, "stepper_task", 4096, NULL, configMAX_PRIORITIES - 14, NULL);
+	xTaskCreate(stepper_task, "stepper_task", 4096, NULL, configMAX_PRIORITIES - 14, NULL);
 
 	while (1)
 	{	

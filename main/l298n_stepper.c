@@ -10,15 +10,16 @@ static uint32_t g_min_step_us = 200;   // default safety
 
 // HALF-STEP SEQUENCE (8 steps)
 static const int seq[8][4] = {
-    {1,0,0,0},
-    {1,1,0,0},
-    {0,1,0,0},
-    {0,1,1,0},
-    {0,0,1,0},
-    {0,0,1,1},
-    {0,0,0,1},
-    {1,0,0,1}
+    {1,0,0,0}, // step 0
+    {1,0,1,0}, // step 1 
+    {0,0,1,0}, // step 2
+    {0,1,1,0}, // step 3
+    {0,1,0,0}, // step 4
+    {0,1,0,1}, // step 5
+    {0,0,0,1}, // step 6
+    {1,0,0,1}  // step 7
 };
+
 
 static inline void write_coils(int s)
 {
@@ -63,7 +64,7 @@ void l298n_move_halfsteps(uint32_t halfsteps, float freq_hz, bool direction)
     {
         write_coils(idx);
 
-        idx += direction ? 1 : -1;
+        idx += direction ? 1 : -1; // direction = TRUE -> idx=idx+1, FALSE -> idx=idx-1
         if (idx > 7) idx = 0;
         if (idx < 0) idx = 7;
 
@@ -84,48 +85,56 @@ void l298n_move_trapezoidal(uint32_t total_steps,
                             bool direction)
 {
     int idx = 0;
-
+    //nr. of steps for acceleration and deceleration
     uint32_t accel_steps = (uint32_t)(accel_time_s * cruise_hz);
     uint32_t decel_steps = (uint32_t)(decel_time_s * cruise_hz);
+
+    // limit steps to total_steps
     if (accel_steps + decel_steps > total_steps)
         accel_steps = decel_steps = total_steps / 2;
 
+    // Remaining steps at cruise speed (constant speed)
     uint32_t cruise_steps = total_steps - accel_steps - decel_steps;
 
+    // Loop for acceleration
     for (uint32_t i = 0; i < accel_steps; i++)
     {
-        float t = (float)i / accel_steps;
-        float freq = start_hz + t * (cruise_hz - start_hz);
+        // Linear interpolation of frequency
+        float t = (float)i / accel_steps; // t goes from 0 to 1 (multiplication factor)
+        float freq = start_hz + t * (cruise_hz - start_hz); // freq increases from start_hz to cruise_hz
 
-        float step_us_f = 1e6f / freq;
-        if (step_us_f < g_min_step_us) step_us_f = g_min_step_us;
+        float step_us_f = 1e6f / freq; // Time per step in microseconds
+        if (step_us_f < g_min_step_us) step_us_f = g_min_step_us; // enforce minimum step time
 
-        write_coils(idx);
-        idx = (direction ? (idx + 1) : (idx + 7)) & 7;
-        esp_rom_delay_us((uint32_t)step_us_f);
+        write_coils(idx); // energize coils with Half-step sequence
+        idx = (direction ? (idx + 1) : (idx + 7)) & 7; // direction = TRUE -> idx=idx+1, FALSE -> idx=idx-1, bitwise AND to wrap around 0-7 (& 7)
+        esp_rom_delay_us((uint32_t)step_us_f); // delay between steps
     }
 
+    // Loop for constant speed (cruise)
     for (uint32_t i = 0; i < cruise_steps; i++)
     {
-        float step_us_f = 1e6f / cruise_hz;
-        if (step_us_f < g_min_step_us) step_us_f = g_min_step_us;
+        float step_us_f = 1e6f / cruise_hz; // Time per step in microseconds
+        if (step_us_f < g_min_step_us) step_us_f = g_min_step_us; // enforce minimum step time
 
-        write_coils(idx);
-        idx = (direction ? (idx + 1) : (idx + 7)) & 7;
-        esp_rom_delay_us((uint32_t)step_us_f);
+        write_coils(idx); // energize coils with Half-step sequence
+        idx = (direction ? (idx + 1) : (idx + 7)) & 7; // direction = TRUE -> idx=idx+1, FALSE -> idx=idx-1, bitwise AND to wrap around 0-7 (& 7)
+        esp_rom_delay_us((uint32_t)step_us_f); // delay between steps
     }
 
+    // Loop for deceleration
     for (uint32_t i = 0; i < decel_steps; i++)
     {
-        float t = (float)i / decel_steps;
-        float freq = cruise_hz + t * (end_hz - cruise_hz);
+        // Linear interpolation of frequency
+        float t = (float)i / decel_steps; // t goes from 0 to 1 (multiplication factor)
+        float freq = cruise_hz + t * (end_hz - cruise_hz); // freq decreases from cruise_hz to end_hz
 
-        float step_us_f = 1e6f / freq;
-        if (step_us_f < g_min_step_us) step_us_f = g_min_step_us;
+        float step_us_f = 1e6f / freq; // Time per step in microseconds
+        if (step_us_f < g_min_step_us) step_us_f = g_min_step_us; // enforce minimum step time
 
         write_coils(idx);
         idx = (direction ? (idx + 1) : (idx + 7)) & 7;
-        esp_rom_delay_us((uint32_t)step_us_f);
+        esp_rom_delay_us((uint32_t)step_us_f); // delay between steps
     }
 }
 
@@ -139,63 +148,79 @@ void l298n_play_seismic_profile(const seismic_profile_t *profile, bool direction
 
     for (int i = 0; i < profile->length; i++)
     {
-        float freq = profile->speed_hz[i];
-        float duration = profile->duration_s[i];
+        float freq = profile->speed_hz[i]; // speed in Hz
+        float duration = profile->duration_s[i]; // duration in seconds
 
-        if (freq <= 0 || duration <= 0) continue;
+        if (freq <= 0 || duration <= 0) continue; // skip invalid entries
 
-        float step_us_f = 1e6f / freq;
-        if (step_us_f < g_min_step_us) step_us_f = g_min_step_us;
-        uint32_t step_us = (uint32_t)step_us_f;
+        float step_us_f = 1e6f / freq; // Time per step in microseconds
+        if (step_us_f < g_min_step_us) step_us_f = g_min_step_us; // enforce minimum step time
+        uint32_t step_us = (uint32_t)step_us_f; // convert to uint32_t
 
-        uint32_t halfsteps = (uint32_t)(duration * freq);
+        uint32_t halfsteps = (uint32_t)(duration * freq); // total halfsteps for this segment
 
         for (uint32_t s = 0; s < halfsteps; s++)
         {
-            write_coils(idx);
-            idx = (direction ? (idx + 1) : (idx + 7)) & 7;
-            esp_rom_delay_us(step_us);
+            write_coils(idx); // energize coils with Half-step sequence
+            idx = (direction ? (idx + 1) : (idx + 7)) & 7; // direction = TRUE -> idx=idx+1, FALSE -> idx=idx-1, bitwise AND to wrap around 0-7 (& 7)
+            esp_rom_delay_us(step_us); // delay between steps
+
+            // yield to FreeRTOS to prevent watchdog
+            if (s % 100 == 0) {
+                vTaskDelay(pdMS_TO_TICKS(1)); // for each 100 steps, 1ms delay to yield
+            }
+            // -----------------------------
         }
     }
 }
 void stepper_task(void *arg)
 {
-	// ---------------------------------------------------
-    // 1) Mover 2000 halfsteps a 800 Hz
-    // ---------------------------------------------------
-	ESP_LOGI("STEPMOTOR", "Move 2000 halfsteps at 800 Hz");
-    l298n_move_halfsteps(2000, 800, true);
-	vTaskDelay(pdMS_TO_TICKS(2000)); // Delay de 2 segundos
+    for(;;)
+    {
+        // Espera que o botão seja premido
+        ESP_LOGI("STEPMOTOR", "Press button to Step Motor Test start...");
+        while (gpio_get_level(GPIO_NUM_14) == 1) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        vTaskDelay(pdMS_TO_TICKS(50)); // Anti-bounce simples
 
-    // ---------------------------------------------------
-    // 2) Movimento trapezoidal
-    // ---------------------------------------------------
-	ESP_LOGI("STEPMOTOR", "Trapezoidal move: 4000 halfsteps, 200->1200->200 Hz, 300ms accel/decel");
-    l298n_move_trapezoidal(
-        4000,       // total halfsteps
-        200,        // start
-        1200,       // cruise
-        200,        // end
-        0.3f,       // ramp up 300ms
-        0.3f,       // ramp down 300ms
-        true
-    );
-	vTaskDelay(pdMS_TO_TICKS(2000)); // Delay de 2 segundos
+        // ---------------------------------------------------
+        // 1) Mover 2000 halfsteps a 800 Hz
+        // ---------------------------------------------------
+        ESP_LOGI("STEPMOTOR", "Move 2000 halfsteps at 800 Hz");
+        l298n_move_halfsteps(2000, 800, true);
+        vTaskDelay(pdMS_TO_TICKS(2000)); // Delay de 2 segundos
 
-    // ---------------------------------------------------
-    // 3) Perfil sísmico
-    // ---------------------------------------------------
-	ESP_LOGI("STEPMOTOR", "Seismic profile move");
-    static const float speeds[]   = {300, 800, 1200, 400, 200};
-    static const float durations[] = {0.2, 0.2, 0.2, 0.2, 0.2};
+        // ---------------------------------------------------
+        // 2) Movimento trapezoidal
+        // ---------------------------------------------------
+        ESP_LOGI("STEPMOTOR", "Trapezoidal move: 4000 halfsteps, 200->1200->200 Hz, 300ms accel/decel");
+        l298n_move_trapezoidal(
+            4000,       // total halfsteps
+            200,        // start
+            1200,       // cruise
+            200,        // end
+            0.3f,       // ramp up 300ms
+            0.3f,       // ramp down 300ms
+            true
+        );
+        vTaskDelay(pdMS_TO_TICKS(2000)); // Delay de 2 segundos
 
-    seismic_profile_t profile = {
-        .speed_hz = speeds,
-        .duration_s = durations,
-        .length = 5
-    };
+        // ---------------------------------------------------
+        // 3) Perfil sísmico
+        // ---------------------------------------------------
+        ESP_LOGI("STEPMOTOR", "Seismic profile move");
+        static const float speeds[]   = {300, 800, 1200, 400, 200};
+        static const float durations[] = {0.2, 0.2, 0.2, 0.2, 0.2};
 
-    l298n_play_seismic_profile(&profile, true);
-
-    ESP_LOGI("STEPMOTOR", "Done");
+        seismic_profile_t profile = {
+            .speed_hz = speeds,
+            .duration_s = durations,
+            .length = 5
+        };
+        for(int repeat=0; repeat<5; repeat++){
+            l298n_play_seismic_profile(&profile, true);
+        }
+        ESP_LOGI("STEPMOTOR", "Stepper Moter Tests Done");
+    }
 }
