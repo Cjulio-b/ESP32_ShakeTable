@@ -164,13 +164,8 @@ void l298n_play_seismic_profile(const seismic_profile_t *profile, bool direction
             write_coils(idx); // energize coils with Half-step sequence
             idx = (direction ? (idx + 1) : (idx + 7)) & 7; // direction = TRUE -> idx=idx+1, FALSE -> idx=idx-1, bitwise AND to wrap around 0-7 (& 7)
             esp_rom_delay_us(step_us); // delay between steps
-
-            // yield to FreeRTOS to prevent watchdog
-            if (s % 100 == 0) {
-                vTaskDelay(pdMS_TO_TICKS(1)); // for each 100 steps, 1ms delay to yield
-            }
-            // -----------------------------
         }
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
 void stepper_task(void *arg)
@@ -220,6 +215,7 @@ void stepper_task(void *arg)
         };
         for(int repeat=0; repeat<5; repeat++){
             l298n_play_seismic_profile(&profile, true);
+            vTaskDelay(pdMS_TO_TICKS(10));
         }
         ESP_LOGI("STEPMOTOR", "Stepper Moter Tests Done");
     }
