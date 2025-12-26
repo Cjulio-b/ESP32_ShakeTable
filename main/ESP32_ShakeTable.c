@@ -20,6 +20,7 @@ void app_main(void)
 	init_uart();
 	//start_wifi_ap(); //start Wi-Fi
 	//start_webserver(); //start HTTP server
+
 	// (1/2) --- Teste do stepper motor L298N half-step ------
     ESP_LOGI("STEPMOTOR", "Initializing L298N and stepper motor...");
     l298n_init();
@@ -41,6 +42,9 @@ void app_main(void)
 
 	// Task para controlar o stepper motor L298N
 	xTaskCreate(stepper_task, "stepper_task", 4096, NULL, configMAX_PRIORITIES - 14, NULL);
+
+	// Task para controlar o stepper motor com DRV8825 e RMT
+	xTaskCreate(stepper_rmt_task,"stepper_rmt_task",4096,NULL,configMAX_PRIORITIES - 10,NULL);
 
 	while (1)
 	{	
