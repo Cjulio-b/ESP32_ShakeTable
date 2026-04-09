@@ -40,8 +40,10 @@ void return_data_from_nextion(const uint8_t *buff, int idx);
 void step_motor(bool direction);
 
 // DRV8825 + RMT stepper motor functions -----------------------------------------------
-void stepper_rmt_init(void);
-esp_err_t stepper_rmt_run_steps(uint32_t uniform_speed_hz, uint32_t uniform_samples, uint32_t accel_samples, uint32_t decel_samples, bool direction);
-void stepper_rmt_task(void *arg);
+typedef struct stepper_rmt_context_t stepper_rmt_context_t;
+stepper_rmt_context_t* stepper_rmt_init(uint8_t gpio_en, uint8_t gpio_dir, uint8_t gpio_step);
+esp_err_t stepper_rmt_run_steps(stepper_rmt_context_t *ctx, uint32_t uniform_speed_hz, uint32_t uniform_samples, uint32_t accel_samples, uint32_t decel_samples, bool direction);
+void stepper_rmt_task_1(void *arg);
+void stepper_rmt_task_2(void *arg);
 
 #endif /* MAIN_FUNCTIONS_H_ */

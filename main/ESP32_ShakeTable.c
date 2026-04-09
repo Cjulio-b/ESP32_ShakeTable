@@ -40,15 +40,16 @@ void app_main(void)
 	// Task para monitorizar o uso de stack
     xTaskCreate(monitor_task, "monitor_task", 4096, NULL, configMAX_PRIORITIES - 20, NULL);
 
-	// Task para controlar o stepper motor L298N
-	xTaskCreate(stepper_task, "stepper_task", 4096, NULL, configMAX_PRIORITIES - 14, NULL);
+	// Task para controlar o stepper motor L298N - NOT USED, USE RMT INSTEAD
+	//xTaskCreate(stepper_task, "stepper_task", 4096, NULL, configMAX_PRIORITIES - 14, NULL);
 
-	// Task para controlar o stepper motor com DRV8825 e RMT
-	xTaskCreate(stepper_rmt_task,"stepper_rmt_task",4096,NULL,configMAX_PRIORITIES - 10,NULL);
+	// Tasks para controlar os stepper motores com DRV8825 e RMT de forma independente
+	xTaskCreate(stepper_rmt_task_1, "stepper_rmt_task_1", 4096, NULL, configMAX_PRIORITIES - 10, NULL);
+	xTaskCreate(stepper_rmt_task_2, "stepper_rmt_task_2", 4096, NULL, configMAX_PRIORITIES - 10, NULL);
 
 	while (1)
 	{	
-		testing_led();
+		//testing_led();
 		vTaskDelay(pdMS_TO_TICKS(10)); // Delay de 10ms
 	}
 
