@@ -7,6 +7,7 @@
 #include "functions.h"
 #include "driver/gpio.h"
 #include "l298n_stepper.h"
+#include "kinematics.h"
 
 static const char* TAG = "ESP32_ShakeTable";
 #define UART_TASK_STACK_SIZE 4096
@@ -33,6 +34,21 @@ void app_main(void)
 	printf("Starting the Shake Table...\n");
 	ESP_LOGI(TAG, "msg: Starting the Shake Table...\n");
 	
+	// --- Teste da Estrutura de Cinemática ---
+	
+	shake_table_config_t my_table;
+	kinematics_init_axis(&my_table.axis_x, 33.0f, 66.0f); // 33mm de deslocamento, 100mm de biela
+	kinematics_init_stepper(&my_table.stepper_x, 1.8f, 32);  // 1.8º, 32 microsteps (6400 passos/volta)
+
+	float angulo = kinematics_calc_angular_position(&my_table.stepper_x, 1600);
+	float posicao_mm = kinematics_calc_linear_position(&my_table.axis_x, angulo);
+	float posicao_real_mm = kinematics_calc_linear_position_relative_90(&my_table.axis_x, angulo);
+	ESP_LOGI(TAG, "Teste Cinemática: 1600 micropassos = %.2f graus", angulo);
+	ESP_LOGI(TAG, "  -> Posição Geométrica (Relativa à biela): %.2f mm", posicao_mm);
+	ESP_LOGI(TAG, "  -> Posição Real (Relativa a 90 graus): %.2f mm", posicao_real_mm);
+	
+	// --- Fim do Teste da Estrutura de Cinemática ---
+
 	vTaskDelay(pdMS_TO_TICKS(3000)); // Delay de 3 segundos
 
 	xTaskCreate(rx_task, "uart_rx_task", UART_TASK_STACK_SIZE, NULL, configMAX_PRIORITIES - 15, &rxTaskHandle);
