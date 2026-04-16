@@ -37,7 +37,7 @@ void app_main(void)
 	// --- Teste da Estrutura de Cinemática ---
 	
 	shake_table_config_t my_table;
-	kinematics_init_axis(&my_table.axis_x, 33.0f, 66.0f); // 33mm de deslocamento, 100mm de biela
+	kinematics_init_axis(&my_table.axis_x, 33.0f, 66.0f); // 33mm de deslocamento, 66mm de biela
 	kinematics_init_stepper(&my_table.stepper_x, 1.8f, 32);  // 1.8º, 32 microsteps (6400 passos/volta)
 
 	float angulo = kinematics_calc_angular_position(&my_table.stepper_x, 1600);

@@ -43,6 +43,7 @@ void step_motor(bool direction);
 typedef struct stepper_rmt_context_t stepper_rmt_context_t;
 stepper_rmt_context_t* stepper_rmt_init(uint8_t gpio_en, uint8_t gpio_dir, uint8_t gpio_step);
 esp_err_t stepper_rmt_run_steps(stepper_rmt_context_t *ctx, uint32_t uniform_speed_hz, uint32_t uniform_samples, uint32_t accel_samples, uint32_t decel_samples, bool direction);
+esp_err_t stepper_rmt_homing(stepper_rmt_context_t *ctx, uint8_t gpio_limit_right, uint8_t gpio_limit_left);
 void stepper_rmt_task_1(void *arg);
 void stepper_rmt_task_2(void *arg);
 

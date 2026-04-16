@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include "stepper_motor_encoder.h"
 #include "functions.h"
+#include "kinematics.h"
 
 #define STEP_MOTOR_ENABLE_LEVEL  0 // DRV8825 is enabled on low level
 #define STEP_MOTOR_SPIN_DIR_CLOCKWISE 0
@@ -122,13 +123,106 @@ esp_err_t stepper_rmt_run_steps(stepper_rmt_context_t *ctx, uint32_t uniform_spe
     return rmt_tx_wait_all_done(ctx->motor_chan, -1);
 }
 
+esp_err_t stepper_rmt_homing(stepper_rmt_context_t *ctx, uint8_t gpio_limit_right, uint8_t gpio_limit_left)
+{
+    if (!ctx) return ESP_ERR_INVALID_ARG;
+
+    ESP_LOGI(TAG, "Starting HOMING on EN:%d, DIR:%d", ctx->gpio_en, ctx->gpio_dir);
+
+    // Inicializa estrutura de cinemática localmente para efeitos de verificação e debug
+    shake_table_config_t my_table;
+    kinematics_init_axis(&my_table.axis_x, 33.0f, 66.0f); // 33mm de deslocamento, 66mm de biela
+    kinematics_init_stepper(&my_table.stepper_x, 1.8f, 32); // 1.8º, 32 microsteps (6400 passos/volta)
+
+    // Configura os Pinos dos Sensores de Fim de Curso
+    gpio_config_t limit_conf = {
+        .pin_bit_mask = (1ULL << gpio_limit_right) | (1ULL << gpio_limit_left),
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE, // Funciona no 22/23. Nos 36/39 precisas de PULL-UP FÍSICO!
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE
+    };
+    gpio_config(&limit_conf);
+
+    // Ativa o Driver do Motor para o Homing
+    gpio_set_level(ctx->gpio_en, STEP_MOTOR_ENABLE_LEVEL);
+    vTaskDelay(pdMS_TO_TICKS(100)); // Tempo para estabilizar energia nas bobinas
+
+    uint32_t homing_speed_hz = 500; // Velocidade do Homing
+    uint32_t chunk_size = 20;        // Verifica o sensor a cada 20 micropassos (~pequena fração de mm)
+    rmt_transmit_config_t tx_config = { .loop_count = 0 };
+
+    // --- PASSO 1: Mover à Direita (Horário) até Fim de Curso Direito ---
+    ESP_LOGI(TAG, "HOMING: Step 1 - Moving Right (CW) to limit switch (GPIO %d)...", gpio_limit_right);
+    gpio_set_level(ctx->gpio_dir, STEP_MOTOR_SPIN_DIR_CLOCKWISE);
+    
+    // Assume que switch envia GND (0) quando pressionado.
+    while (gpio_get_level(gpio_limit_right) != 0) {
+        for (int i = 0; i < chunk_size; i++) {
+            rmt_transmit(ctx->motor_chan, ctx->uniform_motor_encoder, &homing_speed_hz, sizeof(homing_speed_hz), &tx_config);
+        }
+        rmt_tx_wait_all_done(ctx->motor_chan, -1);
+    }
+    ESP_LOGI(TAG, "HOMING: Right limit hit (+180 deg)!");
+    vTaskDelay(pdMS_TO_TICKS(500));
+
+    // --- PASSO 2: Mover à Esquerda (Anti-Horário) até Fim de Curso Esquerdo e Contar Passos ---
+    ESP_LOGI(TAG, "HOMING: Step 2 - Moving Left (CCW) to limit switch (GPIO %d)...", gpio_limit_left);
+    gpio_set_level(ctx->gpio_dir, STEP_MOTOR_SPIN_DIR_COUNTERCLOCKWISE);
+    uint32_t total_steps = 0;
+    
+    while (gpio_get_level(gpio_limit_left) != 0) {
+        for (int i = 0; i < chunk_size; i++) {
+            rmt_transmit(ctx->motor_chan, ctx->uniform_motor_encoder, &homing_speed_hz, sizeof(homing_speed_hz), &tx_config);
+        }
+        rmt_tx_wait_all_done(ctx->motor_chan, -1);
+        total_steps += chunk_size;
+    }
+    ESP_LOGI(TAG, "HOMING: Left limit hit (-180 deg)! Total measured steps = %lu", total_steps);
+    
+    // --- VERIFICAÇÃO CINEMÁTICA (Fim de Curso a Fim de Curso) ---
+    float angulo_total = kinematics_calc_angular_position(&my_table.stepper_x, total_steps);
+    ESP_LOGI(TAG, "[Verificação Homing] Movimento de ponta a ponta:");
+    ESP_LOGI(TAG, "  -> Passos Medidos: %lu (Teórico p/ 180 graus = %lu)", total_steps, my_table.stepper_x.microsteps_per_rev / 2);
+    ESP_LOGI(TAG, "  -> Ângulo Percorrido Calculado: %.2f graus", angulo_total);
+    
+    vTaskDelay(pdMS_TO_TICKS(500));
+
+    // --- PASSO 3: Mover à Direita (Horário) pelo Centro Calculado ---
+    uint32_t center_steps = total_steps / 2;
+    ESP_LOGI(TAG, "HOMING: Step 3 - Centering (Moving CW by %lu steps)...", center_steps);
+    gpio_set_level(ctx->gpio_dir, STEP_MOTOR_SPIN_DIR_CLOCKWISE);
+    
+    // Reutilizar a função já existente que lida com a injeção em bloco para ser mais rápido
+    stepper_rmt_run_steps(ctx, homing_speed_hz, center_steps, 0, 0, true);
+    
+    ESP_LOGI(TAG, "HOMING: Calibration Finished. Motor is at Center (0 deg).");
+
+    // --- VERIFICAÇÃO CINEMÁTICA (Centro) ---
+    float angulo_centro = kinematics_calc_angular_position(&my_table.stepper_x, center_steps);
+    float pos_real_centro = kinematics_calc_linear_position_relative_90(&my_table.axis_x, angulo_centro);
+    ESP_LOGI(TAG, "[Verificação Homing] Posição de Centro (ponto morto intermédio):");
+    ESP_LOGI(TAG, "  -> Ângulo do Motor: %.2f graus (Esperado ~90.00 graus)", angulo_centro);
+    ESP_LOGI(TAG, "  -> Posição Real (Relativa a 90 graus): %.2f mm (Esperado ~0.00 mm)", pos_real_centro);
+
+    // Desliga driver no final para não aquecer, conforme o sistema atual
+    gpio_set_level(ctx->gpio_en, !STEP_MOTOR_ENABLE_LEVEL);
+
+    return ESP_OK;
+}
+
 void stepper_rmt_task_1(void *arg)
 {
     // Inicializa o Motor 1 com os pinos originais do código
     stepper_rmt_context_t *motor1 = stepper_rmt_init(5, 32, 4);
     
+    // Executa a calibração de Homing assim que o ESP32 arranca!
+    if (motor1) {
+        stepper_rmt_homing(motor1, 22, 23);
+    }
+
     while (1) {
-        
+        // LARGER STEPPER
         // O botão (GPIO 14) tem PULL-UP ativo, ou seja, lê 0 quando premido
         if (motor1 && gpio_get_level(GPIO_NUM_14) == 0) {
             gpio_set_level(GPIO_NUM_25, 1); // Turn LED on
@@ -151,8 +245,13 @@ void stepper_rmt_task_2(void *arg)
     // Inicializa o Motor 2 com outros pinos que queiras utilizar (EN: 15, DIR: 19, STEP: 18)
     stepper_rmt_context_t *motor2 = stepper_rmt_init(19, 15, 18);
 
+    // Executa a calibração de Homing assim que o ESP32 arranca!
+    if (motor2) {
+        stepper_rmt_homing(motor2, 27, 33);
+    }
+
     while (1) {
-        
+        // Smaller STEPPER
         // O botão (GPIO 21) tem PULL-UP ativo, ou seja, lê 0 quando premido
         if (motor2 && gpio_get_level(GPIO_NUM_21) == 0) {
             gpio_set_level(GPIO_NUM_26, 1); // Turn LED on
