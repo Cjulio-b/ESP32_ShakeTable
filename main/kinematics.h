@@ -3,26 +3,26 @@
 
 #include <stdint.h>
 
-// Estrutura para os parâmetros físicos de um eixo da Shake Table
+// Structure for the physical parameters of a Shake Table axis
 typedef struct {
-    float peak_to_peak_disp_mm; // Deslocamento pico a pico (mm)
-    float max_amplitude_mm;     // Amplitude máxima (peak_to_peak_disp_mm / 2)
-    float crank_radius_mm;      // Raio da manivela (geralmente igual à max_amplitude)
-    float rod_length_mm;        // Comprimento da biela
+    float peak_to_peak_disp_mm; // Peak-to-peak displacement (mm)
+    float max_amplitude_mm;     // Maximum amplitude (peak_to_peak_disp_mm / 2)
+    float crank_radius_mm;      // Crank radius (usually equal to max_amplitude)
+    float rod_length_mm;        // Rod length
 } shake_table_axis_config_t;
 
-// Estrutura para os parâmetros do motor de passo
+// Structure for the stepper motor parameters
 typedef struct {
-    float step_angle_deg;          // Resolução base do motor (ex: 1.8º)
-    uint16_t microsteps;           // Modo de microstepping (ex: 32)
+    float step_angle_deg;          // Base resolution of the motor (e.g., 1.8º)
+    uint16_t microsteps;           // Microstepping mode (e.g., 32)
     
-    // Parâmetros calculados automaticamente
-    uint16_t full_steps_per_rev;   // Passos completos por volta (ex: 200)
-    uint32_t microsteps_per_rev;   // Micropassos por volta (ex: 6400)
-    float angular_resolution_deg;  // Resolução angular por micropasso (ex: 0.05625º)
+    // Automatically calculated parameters
+    uint16_t full_steps_per_rev;   // Full steps per revolution (e.g., 200)
+    uint32_t microsteps_per_rev;   // Microsteps per revolution (e.g., 6400)
+    float angular_resolution_deg;  // Angular resolution per microstep (e.g., 0.05625º)
 } stepper_config_t;
 
-// Estrutura global que agrega os eixos e motores X e Y
+// Global structure that aggregates the X and Y axes and motors
 typedef struct {
     shake_table_axis_config_t axis_x;
     shake_table_axis_config_t axis_y;
@@ -31,27 +31,27 @@ typedef struct {
 } shake_table_config_t;
 
 /**
- * @brief Inicializa as propriedades do motor de passo calculando os passos/volta e resolução
+ * @brief Initializes the stepper motor properties by calculating steps/rev and resolution
  */
 void kinematics_init_stepper(stepper_config_t *stepper, float step_angle_deg, uint16_t microsteps);
 
 /**
- * @brief Inicializa as dimensões físicas da mesa (Biela-Manivela)
+ * @brief Initializes the physical dimensions of the table (Slider-Crank mechanism)
  */
 void kinematics_init_axis(shake_table_axis_config_t *axis, float peak_to_peak_mm, float rod_length_mm);
 
 /**
- * @brief Calcula a posição angular atual do motor (em graus [0 a 360]) baseado nos micropassos dados
+ * @brief Calculates the current angular position of the motor (in degrees [0 to 360]) based on the given microsteps
  */
 float kinematics_calc_angular_position(const stepper_config_t *stepper, int32_t current_step);
 
 /**
- * @brief Calcula a posição linear exata do carrinho em mm, a partir do ângulo do motor
+ * @brief Calculates the exact linear position of the carriage in mm, from the motor angle
  */
 float kinematics_calc_linear_position(const shake_table_axis_config_t *axis, float angle_deg);
 
 /**
- * @brief Calcula a posição linear real do carrinho em mm, relativa ao ponto morto (motor a 90º)
+ * @brief Calculates the real linear position of the carriage in mm, relative to the dead center (motor at 90º)
  */
 float kinematics_calc_linear_position_relative_90(const shake_table_axis_config_t *axis, float angle_deg);
 

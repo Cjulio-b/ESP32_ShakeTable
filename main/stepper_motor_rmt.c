@@ -10,6 +10,7 @@
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include <stdlib.h>
+#include <math.h>
 #include "stepper_motor_encoder.h"
 #include "functions.h"
 #include "kinematics.h"
@@ -19,6 +20,7 @@
 #define STEP_MOTOR_SPIN_DIR_COUNTERCLOCKWISE !STEP_MOTOR_SPIN_DIR_CLOCKWISE
 
 #define STEP_MOTOR_RESOLUTION_HZ 1000000 // 1MHz resolution
+#define PI_MATH 3.14159265358979323846f
 
 static const char *TAG = "DRV8825_RMT";
 
@@ -62,8 +64,8 @@ stepper_rmt_context_t* stepper_rmt_init(uint8_t gpio_en, uint8_t gpio_dir, uint8
     };
     ESP_ERROR_CHECK(rmt_new_tx_channel(&tx_chan_config, &ctx->motor_chan));
 
-    ESP_LOGI(TAG, "Disable step motor initially");
-    gpio_set_level(gpio_en, !STEP_MOTOR_ENABLE_LEVEL); // !0 = 1 (HIGH) -> Desativa o driver
+    ESP_LOGI(TAG, "Disable stepper motor driver initially");
+    gpio_set_level(gpio_en, !STEP_MOTOR_ENABLE_LEVEL); // !0 = 1 (HIGH) -> Disables the driver
 
     ESP_LOGI(TAG, "Create motor encoders");
     stepper_motor_curve_encoder_config_t accel_encoder_config = {
@@ -129,34 +131,34 @@ esp_err_t stepper_rmt_homing(stepper_rmt_context_t *ctx, uint8_t gpio_limit_righ
 
     ESP_LOGI(TAG, "Starting HOMING on EN:%d, DIR:%d", ctx->gpio_en, ctx->gpio_dir);
 
-    // Inicializa estrutura de cinemática localmente para efeitos de verificação e debug
+    // Initialize local kinematics structure for debugging and verification purposes
     shake_table_config_t my_table;
-    kinematics_init_axis(&my_table.axis_x, 33.0f, 66.0f); // 33mm de deslocamento, 66mm de biela
-    kinematics_init_stepper(&my_table.stepper_x, 1.8f, 32); // 1.8º, 32 microsteps (6400 passos/volta)
+    kinematics_init_axis(&my_table.axis_x, 33.0f, 66.0f); // 33mm peak-to-peak displacement, 66mm rod length
+    kinematics_init_stepper(&my_table.stepper_x, 1.8f, 32); // 1.8 degree step, 32 microsteps (6400 steps/rev)
 
-    // Configura os Pinos dos Sensores de Fim de Curso
+    // Configure limit switch pins as inputs with pull-ups
     gpio_config_t limit_conf = {
         .pin_bit_mask = (1ULL << gpio_limit_right) | (1ULL << gpio_limit_left),
         .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_ENABLE, // Funciona no 22/23. Nos 36/39 precisas de PULL-UP FÍSICO!
+        .pull_up_en = GPIO_PULLUP_ENABLE, // Note: GPIOs 34-39 do not have internal pull-ups, external resistors required!
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
         .intr_type = GPIO_INTR_DISABLE
     };
     gpio_config(&limit_conf);
 
-    // Ativa o Driver do Motor para o Homing
+    // Enable the motor driver for homing
     gpio_set_level(ctx->gpio_en, STEP_MOTOR_ENABLE_LEVEL);
-    vTaskDelay(pdMS_TO_TICKS(100)); // Tempo para estabilizar energia nas bobinas
+    vTaskDelay(pdMS_TO_TICKS(100)); // Allow time for coil current to stabilize
 
-    uint32_t homing_speed_hz = 500; // Velocidade do Homing
-    uint32_t chunk_size = 20;        // Verifica o sensor a cada 20 micropassos (~pequena fração de mm)
+    uint32_t homing_speed_hz = 500; // Homing speed
+    uint32_t chunk_size = 20;       // Check limit switch every 20 microsteps (small fraction of a mm)
     rmt_transmit_config_t tx_config = { .loop_count = 0 };
 
-    // --- PASSO 1: Mover à Direita (Horário) até Fim de Curso Direito ---
+    // --- STEP 1: Move Right (Clockwise) until the right limit switch is hit ---
     ESP_LOGI(TAG, "HOMING: Step 1 - Moving Right (CW) to limit switch (GPIO %d)...", gpio_limit_right);
     gpio_set_level(ctx->gpio_dir, STEP_MOTOR_SPIN_DIR_CLOCKWISE);
     
-    // Assume que switch envia GND (0) quando pressionado.
+    // Assume the switch pulls to GND (0V) when pressed
     while (gpio_get_level(gpio_limit_right) != 0) {
         for (int i = 0; i < chunk_size; i++) {
             rmt_transmit(ctx->motor_chan, ctx->uniform_motor_encoder, &homing_speed_hz, sizeof(homing_speed_hz), &tx_config);
@@ -166,7 +168,7 @@ esp_err_t stepper_rmt_homing(stepper_rmt_context_t *ctx, uint8_t gpio_limit_righ
     ESP_LOGI(TAG, "HOMING: Right limit hit (+180 deg)!");
     vTaskDelay(pdMS_TO_TICKS(500));
 
-    // --- PASSO 2: Mover à Esquerda (Anti-Horário) até Fim de Curso Esquerdo e Contar Passos ---
+    // --- STEP 2: Move Left (Counter-Clockwise) to the left limit switch and count steps ---
     ESP_LOGI(TAG, "HOMING: Step 2 - Moving Left (CCW) to limit switch (GPIO %d)...", gpio_limit_left);
     gpio_set_level(ctx->gpio_dir, STEP_MOTOR_SPIN_DIR_COUNTERCLOCKWISE);
     uint32_t total_steps = 0;
@@ -180,91 +182,221 @@ esp_err_t stepper_rmt_homing(stepper_rmt_context_t *ctx, uint8_t gpio_limit_righ
     }
     ESP_LOGI(TAG, "HOMING: Left limit hit (-180 deg)! Total measured steps = %lu", total_steps);
     
-    // --- VERIFICAÇÃO CINEMÁTICA (Fim de Curso a Fim de Curso) ---
-    float angulo_total = kinematics_calc_angular_position(&my_table.stepper_x, total_steps);
-    ESP_LOGI(TAG, "[Verificação Homing] Movimento de ponta a ponta:");
-    ESP_LOGI(TAG, "  -> Passos Medidos: %lu (Teórico p/ 180 graus = %lu)", total_steps, my_table.stepper_x.microsteps_per_rev / 2);
-    ESP_LOGI(TAG, "  -> Ângulo Percorrido Calculado: %.2f graus", angulo_total);
+    // --- KINEMATICS VERIFICATION (End-to-End) ---
+    float total_angle = kinematics_calc_angular_position(&my_table.stepper_x, total_steps);
+    ESP_LOGI(TAG, "[Homing Verification] End-to-end movement:");
+    ESP_LOGI(TAG, "  -> Measured Steps: %lu (Theoretical for 180 deg = %lu)", total_steps, my_table.stepper_x.microsteps_per_rev / 2);
+    ESP_LOGI(TAG, "  -> Calculated Travelled Angle: %.2f degrees", total_angle);
     
     vTaskDelay(pdMS_TO_TICKS(500));
 
-    // --- PASSO 3: Mover à Direita (Horário) pelo Centro Calculado ---
+    // --- STEP 3: Move Right (Clockwise) to the calculated center position ---
     uint32_t center_steps = total_steps / 2;
     ESP_LOGI(TAG, "HOMING: Step 3 - Centering (Moving CW by %lu steps)...", center_steps);
     gpio_set_level(ctx->gpio_dir, STEP_MOTOR_SPIN_DIR_CLOCKWISE);
     
-    // Reutilizar a função já existente que lida com a injeção em bloco para ser mais rápido
+    // Reuse the block execution function to move to the center quickly
     stepper_rmt_run_steps(ctx, homing_speed_hz, center_steps, 0, 0, true);
     
     ESP_LOGI(TAG, "HOMING: Calibration Finished. Motor is at Center (0 deg).");
 
-    // --- VERIFICAÇÃO CINEMÁTICA (Centro) ---
-    float angulo_centro = kinematics_calc_angular_position(&my_table.stepper_x, center_steps);
-    float pos_real_centro = kinematics_calc_linear_position_relative_90(&my_table.axis_x, angulo_centro);
-    ESP_LOGI(TAG, "[Verificação Homing] Posição de Centro (ponto morto intermédio):");
-    ESP_LOGI(TAG, "  -> Ângulo do Motor: %.2f graus (Esperado ~90.00 graus)", angulo_centro);
-    ESP_LOGI(TAG, "  -> Posição Real (Relativa a 90 graus): %.2f mm (Esperado ~0.00 mm)", pos_real_centro);
+    // --- KINEMATICS VERIFICATION (Center) ---
+    float center_angle = kinematics_calc_angular_position(&my_table.stepper_x, center_steps);
+    float real_center_pos = kinematics_calc_linear_position_relative_90(&my_table.axis_x, center_angle);
+    ESP_LOGI(TAG, "[Homing Verification] Center Position (intermediate dead center):");
+    ESP_LOGI(TAG, "  -> Motor Angle: %.2f degrees (Expected ~90.00 degrees)", center_angle);
+    ESP_LOGI(TAG, "  -> Real Position (Relative to 90 deg): %.2f mm (Expected ~0.00 mm)", real_center_pos);
 
-    // Desliga driver no final para não aquecer, conforme o sistema atual
+    // Disable the motor driver to prevent overheating while idle
     gpio_set_level(ctx->gpio_en, !STEP_MOTOR_ENABLE_LEVEL);
 
     return ESP_OK;
 }
 
+esp_err_t stepper_rmt_run_sine_profile(stepper_rmt_context_t *ctx, float target_p2p_mm, float freq_hz, float duration_s, const shake_table_config_t *table_config)
+{
+    if (!ctx || !table_config) return ESP_ERR_INVALID_ARG;
+
+    float max_p2p = table_config->axis_x.peak_to_peak_disp_mm; // Typical max displacement (e.g., 33.0mm)
+    
+    // Safety check: clamp requested displacement to the physical table maximum
+    if (target_p2p_mm > max_p2p) {
+        ESP_LOGW(TAG, "Warning: Requested displacement (%.2fmm) exceeds physical limit (%.2fmm). Clamping to maximum.", target_p2p_mm, max_p2p);
+        target_p2p_mm = max_p2p;
+    }
+
+    ESP_LOGI(TAG, "Sinusoidal Seismic Profile: P2P=%.2fmm, Freq=%.2fHz, Dur=%.2fs", target_p2p_mm, freq_hz, duration_s);
+
+    gpio_set_level(ctx->gpio_en, STEP_MOTOR_ENABLE_LEVEL); // Enable driver
+    vTaskDelay(pdMS_TO_TICKS(50));
+
+    // CASE 1: Continuous Rotation (Maximum Amplitude)
+    // For max P2P (~33mm), the crank-slider mechanism translates continuous rotation into full linear strokes.
+    if (target_p2p_mm >= max_p2p - 0.1f) {
+        ESP_LOGI(TAG, "Continuous Rotation Mode (Crank-slider naturally actuates the full stroke)");
+        uint32_t speed_hz = (uint32_t)(table_config->stepper_x.microsteps_per_rev * freq_hz);
+        uint32_t total_steps = (uint32_t)(speed_hz * duration_s);
+        
+        stepper_rmt_run_steps(ctx, speed_hz, total_steps, 0, 0, true);
+    } 
+    // CASE 2: Partial Oscillation (e.g., 10mm)
+    // The motor oscillates +/- X degrees from the center point.
+    else {
+        ESP_LOGI(TAG, "Partial Oscillation Mode (Motor reverses direction to achieve %.2fmm p2p)", target_p2p_mm);
+        
+        float r = table_config->axis_x.max_amplitude_mm; // Crank radius (half of maximum table displacement)
+        float A = target_p2p_mm / 2.0f;                  // Desired peak amplitude from the center (e.g., 5mm)
+        
+        // Calculate required mechanical angle from the center (in radians) using simple inverse kinematics
+        float theta_rad = asinf(A / r);
+        
+        // Exact motor steps required to reach the peak of this oscillation amplitude
+        float s_amp = (theta_rad / (2.0f * PI_MATH)) * table_config->stepper_x.microsteps_per_rev;
+
+        // Velocity profile generation for 1/4 of the wave cycle (0 to peak)
+        #define Q_SEGMENTS 20
+        uint32_t q_steps[Q_SEGMENTS];
+        uint32_t q_speeds[Q_SEGMENTS];
+
+        float T = 1.0f / freq_hz;
+        float dt = (T / 4.0f) / Q_SEGMENTS;
+        float accum = 0.0f;
+
+        for (int i = 0; i < Q_SEGMENTS; i++) {
+            float tau1 = (float)i / Q_SEGMENTS;
+            float tau2 = (float)(i + 1) / Q_SEGMENTS;
+
+            // The position progresses sinusoidally over time
+            float s1 = s_amp * sinf((PI_MATH / 2.0f) * tau1);
+            float s2 = s_amp * sinf((PI_MATH / 2.0f) * tau2);
+            float ds = s2 - s1; // Step delta for this specific segment
+
+            accum += ds;
+            uint32_t steps = (uint32_t)floorf(accum);
+            accum -= steps; // Accumulate rounding fractional errors to prevent step loss
+
+            q_steps[i] = steps;
+            if (steps > 0) {
+                q_speeds[i] = (uint32_t)((float)steps / dt);
+                if (q_speeds[i] < 10) q_speeds[i] = 10; // RMT safety limit: minimum frequency
+            } else {
+                q_speeds[i] = 0;
+            }
+        }
+
+        int num_cycles = (int)roundf(duration_s * freq_hz);
+        int total_quarters = num_cycles * 4;
+        rmt_transmit_config_t tx_config = { .loop_count = 0 };
+
+        // Execute the profile quarter-by-quarter
+        for (int q = 0; q < total_quarters; q++) {
+            // q=0: Forward (Moving away from center to positive peak)
+            // q=1: Reverse (Returning to center)
+            // q=2: Reverse (Moving away from center to negative peak)
+            // q=3: Forward (Returning to center)
+            bool is_cw = (q % 4 == 0) || (q % 4 == 3);
+            bool is_decel = (q % 4 == 0) || (q % 4 == 2); // Decelerate whenever moving away from the center
+
+            gpio_set_level(ctx->gpio_dir, is_cw ? STEP_MOTOR_SPIN_DIR_CLOCKWISE : STEP_MOTOR_SPIN_DIR_COUNTERCLOCKWISE);
+
+            for (int i = 0; i < Q_SEGMENTS; i++) {
+                int idx = is_decel ? i : (Q_SEGMENTS - 1 - i); // Reverse speed array reading order if accelerating
+                uint32_t steps = q_steps[idx];
+
+                if (steps > 0 && q_speeds[idx] > 0) {
+                    // In RMT Uniform mode, 'rmt_transmit' must be called N times for N steps
+                    for (uint32_t s = 0; s < steps; s++) {
+                        rmt_transmit(ctx->motor_chan, ctx->uniform_motor_encoder, &q_speeds[idx], sizeof(q_speeds[idx]), &tx_config);
+                    }
+                }
+            }
+            // Wait for this movement to finish before reversing direction
+            rmt_tx_wait_all_done(ctx->motor_chan, -1);
+        }
+    }
+
+    gpio_set_level(ctx->gpio_en, !STEP_MOTOR_ENABLE_LEVEL); // Disable the driver
+    ESP_LOGI(TAG, "Sinusoidal Seismic Profile Completed!");
+    return ESP_OK;
+}
+
 void stepper_rmt_task_1(void *arg)
 {
-    // Inicializa o Motor 1 com os pinos originais do código
+    // Initialize Motor 1 with the configured pins
     stepper_rmt_context_t *motor1 = stepper_rmt_init(5, 32, 4);
     
-    // Executa a calibração de Homing assim que o ESP32 arranca!
+    shake_table_config_t my_table;
+    kinematics_init_axis(&my_table.axis_x, 33.0f, 66.0f); // 33mm peak-to-peak displacement, 66mm rod length
+    kinematics_init_stepper(&my_table.stepper_x, 1.8f, 32); // 1.8 degree step, 32 microsteps
+
+    // Execute Homing calibration on startup
     if (motor1) {
         stepper_rmt_homing(motor1, 22, 23);
     }
 
     while (1) {
         // LARGER STEPPER
-        // O botão (GPIO 14) tem PULL-UP ativo, ou seja, lê 0 quando premido
+        // Button (GPIO 14) has an active internal PULL-UP, so it reads 0 when pressed
         if (motor1 && gpio_get_level(GPIO_NUM_14) == 0) {
             gpio_set_level(GPIO_NUM_25, 1); // Turn LED on
-            gpio_set_level(motor1->gpio_en, STEP_MOTOR_ENABLE_LEVEL); // Ativa o driver do motor 1
+
+            // Simple test for turn motor clockwise and counterclockwise
+            /*gpio_set_level(motor1->gpio_en, STEP_MOTOR_ENABLE_LEVEL); // Enable Motor 1 driver
             stepper_rmt_run_steps(motor1, 1500, 5000, 500, 500, true);
             vTaskDelay(pdMS_TO_TICKS(1000));
             stepper_rmt_run_steps(motor1, 1500, 5000, 500, 500, false);
             vTaskDelay(pdMS_TO_TICKS(1000));
-            gpio_set_level(motor1->gpio_en, !STEP_MOTOR_ENABLE_LEVEL); // Desativa o driver após terminar
+            gpio_set_level(motor1->gpio_en, !STEP_MOTOR_ENABLE_LEVEL); // Disable driver after finished
+            */
+            //--- End Test---
+            
+            // Test Seismic Profile: Amplitude 32.0mm, Frequency 2.0 Hz, Duration 5 Seconds
+            stepper_rmt_run_sine_profile(motor1, 32.0f, 2.0f, 5.0f, &my_table);
+            //--- End Test ---
         }
         
         gpio_set_level(GPIO_NUM_25, 0); // Turn LED off
-        // Atraso essencial para libertar o CPU quando o botão não está premido
+        // Essential delay to yield CPU to other tasks when idle
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
 
 void stepper_rmt_task_2(void *arg)
 {
-    // Inicializa o Motor 2 com outros pinos que queiras utilizar (EN: 15, DIR: 19, STEP: 18)
+    // Initialize Motor 2 with the specified pins (EN: 15, DIR: 19, STEP: 18)
     stepper_rmt_context_t *motor2 = stepper_rmt_init(19, 15, 18);
 
-    // Executa a calibração de Homing assim que o ESP32 arranca!
+    shake_table_config_t my_table;
+    kinematics_init_axis(&my_table.axis_x, 33.0f, 66.0f); // 33mm peak-to-peak displacement, 66mm rod length
+    kinematics_init_stepper(&my_table.stepper_x, 1.8f, 32); // 1.8 degree step, 32 microsteps
+
+    // Execute Homing calibration on startup
     if (motor2) {
         stepper_rmt_homing(motor2, 27, 33);
     }
 
     while (1) {
         // Smaller STEPPER
-        // O botão (GPIO 21) tem PULL-UP ativo, ou seja, lê 0 quando premido
+        // Button (GPIO 21) has an active internal PULL-UP, so it reads 0 when pressed
         if (motor2 && gpio_get_level(GPIO_NUM_21) == 0) {
             gpio_set_level(GPIO_NUM_26, 1); // Turn LED on
-            gpio_set_level(motor2->gpio_en, STEP_MOTOR_ENABLE_LEVEL); // Ativa o driver do motor 2
+            // Simple test for turn motor clockwise and counterclockwise
+        /*  gpio_set_level(motor2->gpio_en, STEP_MOTOR_ENABLE_LEVEL); // Enable Motor 2 driver
             stepper_rmt_run_steps(motor2, 1500, 5000, 500, 500, true);
             vTaskDelay(pdMS_TO_TICKS(1000));
             stepper_rmt_run_steps(motor2, 1500, 5000, 500, 500, false);
             vTaskDelay(pdMS_TO_TICKS(1000));
-            gpio_set_level(motor2->gpio_en, !STEP_MOTOR_ENABLE_LEVEL); // Desativa o driver após terminar
+            gpio_set_level(motor2->gpio_en, !STEP_MOTOR_ENABLE_LEVEL); // Disable driver after finished
+        */
+            //---End Test---
+
+            // Test Seismic Profile: Amplitude 32.0mm, Frequency 2.0 Hz, Duration 5 Seconds
+            stepper_rmt_run_sine_profile(motor2, 32.0f, 2.0f, 5.0f, &my_table);        
+            //--- End Test ---
         }
         
         gpio_set_level(GPIO_NUM_26, 0); // Turn LED off
-        // Atraso essencial para libertar o CPU quando o botão não está premido
+        // Essential delay to yield CPU to other tasks when idle
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 }

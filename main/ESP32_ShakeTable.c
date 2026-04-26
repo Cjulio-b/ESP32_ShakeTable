@@ -34,39 +34,39 @@ void app_main(void)
 	printf("Starting the Shake Table...\n");
 	ESP_LOGI(TAG, "msg: Starting the Shake Table...\n");
 	
-	// --- Teste da Estrutura de Cinemática ---
+	// --- Kinematics Structure Test ---
 	
-	shake_table_config_t my_table;
-	kinematics_init_axis(&my_table.axis_x, 33.0f, 66.0f); // 33mm de deslocamento, 66mm de biela
-	kinematics_init_stepper(&my_table.stepper_x, 1.8f, 32);  // 1.8º, 32 microsteps (6400 passos/volta)
+	/*shake_table_config_t my_table;
+	kinematics_init_axis(&my_table.axis_x, 33.0f, 66.0f); // 33mm peak-to-peak displacement, 66mm rod length
+	kinematics_init_stepper(&my_table.stepper_x, 1.8f, 32);  // 1.8 degree step, 32 microsteps (6400 steps/rev)
 
-	float angulo = kinematics_calc_angular_position(&my_table.stepper_x, 1600);
-	float posicao_mm = kinematics_calc_linear_position(&my_table.axis_x, angulo);
-	float posicao_real_mm = kinematics_calc_linear_position_relative_90(&my_table.axis_x, angulo);
-	ESP_LOGI(TAG, "Teste Cinemática: 1600 micropassos = %.2f graus", angulo);
-	ESP_LOGI(TAG, "  -> Posição Geométrica (Relativa à biela): %.2f mm", posicao_mm);
-	ESP_LOGI(TAG, "  -> Posição Real (Relativa a 90 graus): %.2f mm", posicao_real_mm);
-	
-	// --- Fim do Teste da Estrutura de Cinemática ---
+	float angle = kinematics_calc_angular_position(&my_table.stepper_x, 1600);
+	float position_mm = kinematics_calc_linear_position(&my_table.axis_x, angle);
+	float real_position_mm = kinematics_calc_linear_position_relative_90(&my_table.axis_x, angle);
+	ESP_LOGI(TAG, "Kinematics Test: 1600 microsteps = %.2f degrees", angle);
+	ESP_LOGI(TAG, "  -> Geometric Position (Relative to rod): %.2f mm", position_mm);
+	ESP_LOGI(TAG, "  -> Real Position (Relative to 90 degrees): %.2f mm", real_position_mm);
+	*/
+	// --- End of Kinematics Structure Test ---
 
-	vTaskDelay(pdMS_TO_TICKS(3000)); // Delay de 3 segundos
+	vTaskDelay(pdMS_TO_TICKS(3000)); // 3 seconds delay
 
 	xTaskCreate(rx_task, "uart_rx_task", UART_TASK_STACK_SIZE, NULL, configMAX_PRIORITIES - 15, &rxTaskHandle);
 	xTaskCreate(tx_task, "uart_tx_task", UART_TASK_STACK_SIZE, NULL, configMAX_PRIORITIES - 16, &txTaskHandle);
-	// Task para monitorizar o uso de stack
+	// Task to monitor stack usage
     xTaskCreate(monitor_task, "monitor_task", 4096, NULL, configMAX_PRIORITIES - 20, NULL);
 
 	// Task para controlar o stepper motor L298N - NOT USED, USE RMT INSTEAD
 	//xTaskCreate(stepper_task, "stepper_task", 4096, NULL, configMAX_PRIORITIES - 14, NULL);
 
-	// Tasks para controlar os stepper motores com DRV8825 e RMT de forma independente
+	// Tasks to control the stepper motors with DRV8825 and RMT independently
 	xTaskCreate(stepper_rmt_task_1, "stepper_rmt_task_1", 4096, NULL, configMAX_PRIORITIES - 10, NULL);
 	xTaskCreate(stepper_rmt_task_2, "stepper_rmt_task_2", 4096, NULL, configMAX_PRIORITIES - 10, NULL);
 
 	while (1)
 	{	
 		//testing_led();
-		vTaskDelay(pdMS_TO_TICKS(10)); // Delay de 10ms
+		vTaskDelay(pdMS_TO_TICKS(10)); // 10ms delay
 	}
 
 }
