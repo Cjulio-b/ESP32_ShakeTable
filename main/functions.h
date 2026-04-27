@@ -5,6 +5,8 @@
 #include "esp_mac.h"
 #include "esp_err.h"          // Para o tipo esp_err_t
 #include "esp_http_server.h"  // Para httpd_req_t e httpd_handle_t
+#include "esp_adc/adc_oneshot.h"
+#include "kinematics.h"
 
 // GLOBAL Variables -----------------------------------
 extern bool MonitorTask;
@@ -44,6 +46,7 @@ typedef struct stepper_rmt_context_t stepper_rmt_context_t;
 stepper_rmt_context_t* stepper_rmt_init(uint8_t gpio_en, uint8_t gpio_dir, uint8_t gpio_step);
 esp_err_t stepper_rmt_run_steps(stepper_rmt_context_t *ctx, uint32_t uniform_speed_hz, uint32_t uniform_samples, uint32_t accel_samples, uint32_t decel_samples, bool direction);
 esp_err_t stepper_rmt_homing(stepper_rmt_context_t *ctx, uint8_t gpio_limit_right, uint8_t gpio_limit_left);
+esp_err_t stepper_rmt_run_realtime_sine_profile(stepper_rmt_context_t *ctx, float target_p2p_mm, float duration_s, adc_oneshot_unit_handle_t adc_handle, adc_channel_t adc_chan, float min_hz, float max_hz, const shake_table_config_t *table_config);
 void stepper_rmt_task_1(void *arg);
 void stepper_rmt_task_2(void *arg);
 

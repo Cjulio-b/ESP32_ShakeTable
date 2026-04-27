@@ -14,6 +14,8 @@
 #include "stepper_motor_encoder.h"
 #include "functions.h"
 #include "kinematics.h"
+#include "esp_timer.h"
+#include "esp_adc/adc_oneshot.h"
 
 #define STEP_MOTOR_ENABLE_LEVEL  0 // DRV8825 is enabled on low level
 #define STEP_MOTOR_SPIN_DIR_CLOCKWISE 0
@@ -23,6 +25,9 @@
 #define PI_MATH 3.14159265358979323846f
 
 static const char *TAG = "DRV8825_RMT";
+
+// Handle global partilhado do ADC1 para ambas as tasks
+static adc_oneshot_unit_handle_t s_adc1_handle = NULL;
 
 struct stepper_rmt_context_t {
     uint8_t gpio_en;
@@ -320,6 +325,110 @@ esp_err_t stepper_rmt_run_sine_profile(stepper_rmt_context_t *ctx, float target_
     return ESP_OK;
 }
 
+esp_err_t stepper_rmt_run_realtime_sine_profile(stepper_rmt_context_t *ctx, float target_p2p_mm, float duration_s, adc_oneshot_unit_handle_t adc_handle, adc_channel_t adc_chan, float min_hz, float max_hz, const shake_table_config_t *table_config)
+{
+    if (!ctx || !table_config || !adc_handle) return ESP_ERR_INVALID_ARG;
+
+    float max_p2p = table_config->axis_x.peak_to_peak_disp_mm;
+    if (target_p2p_mm > max_p2p) target_p2p_mm = max_p2p;
+
+    ESP_LOGI(TAG, "Real-Time Seismic Profile: P2P=%.2fmm, Dur=%.2fs, Freq=%.2f to %.2f Hz", target_p2p_mm, duration_s, min_hz, max_hz);
+
+    gpio_set_level(ctx->gpio_en, STEP_MOTOR_ENABLE_LEVEL);
+    vTaskDelay(pdMS_TO_TICKS(50));
+
+    int64_t start_time_us = esp_timer_get_time();
+    int64_t duration_us = (int64_t)(duration_s * 1000000.0f);
+    rmt_transmit_config_t tx_config = { .loop_count = 0 };
+
+    // CASE 1: Rotação Contínua (Curso Máximo)
+    if (target_p2p_mm >= max_p2p - 0.1f) {
+        while (esp_timer_get_time() - start_time_us < duration_us) {
+            int adc_val = 0;
+            adc_oneshot_read(adc_handle, adc_chan, &adc_val);
+            
+            // Mapeia ADC (0-4095) para a gama de Frequências configurada
+            float freq_hz = min_hz + ((float)adc_val / 4095.0f) * (max_hz - min_hz);
+            uint32_t speed_hz = (uint32_t)(table_config->stepper_x.microsteps_per_rev * freq_hz);
+            
+            // Transmite um pequeno bloco (aprox 100ms) à velocidade atual antes de ler novamente
+            uint32_t chunk_steps = (uint32_t)(speed_hz * 0.1f);
+            if(chunk_steps == 0) chunk_steps = 1;
+
+            stepper_rmt_run_steps(ctx, speed_hz, chunk_steps, 0, 0, true);
+        }
+    } 
+    // CASE 2: Oscilação Parcial
+    else {
+        float r = table_config->axis_x.max_amplitude_mm;
+        float A = target_p2p_mm / 2.0f;
+        float theta_rad = asinf(A / r);
+        float s_amp = (theta_rad / (2.0f * PI_MATH)) * table_config->stepper_x.microsteps_per_rev;
+
+        #define Q_SEGMENTS 20
+        uint32_t q_steps[Q_SEGMENTS];
+        uint32_t q_speeds[Q_SEGMENTS];
+
+        float accum = 0.0f; // Mantido fora do loop para não perder precisão inter-quartos
+        int q = 0;
+
+        while (1) {
+            // Verifica se o tempo acabou APENAS quando regressa ao centro (evita parar com a mesa de lado)
+            if (q > 0 && (q % 4 == 0)) {
+                if (esp_timer_get_time() - start_time_us >= duration_us) {
+                    break;
+                }
+            }
+
+            int adc_val = 0;
+            adc_oneshot_read(adc_handle, adc_chan, &adc_val);
+            float freq_hz = min_hz + ((float)adc_val / 4095.0f) * (max_hz - min_hz);
+
+            float T = 1.0f / freq_hz;
+            float dt = (T / 4.0f) / Q_SEGMENTS;
+
+            for (int i = 0; i < Q_SEGMENTS; i++) {
+                float tau1 = (float)i / Q_SEGMENTS;
+                float tau2 = (float)(i + 1) / Q_SEGMENTS;
+                float s1 = s_amp * sinf((PI_MATH / 2.0f) * tau1);
+                float s2 = s_amp * sinf((PI_MATH / 2.0f) * tau2);
+                
+                accum += (s2 - s1);
+                uint32_t steps = (uint32_t)floorf(accum);
+                accum -= steps;
+
+                q_steps[i] = steps;
+                if (steps > 0) {
+                    q_speeds[i] = (uint32_t)((float)steps / dt);
+                    if (q_speeds[i] < 10) q_speeds[i] = 10;
+                } else {
+                    q_speeds[i] = 0;
+                }
+            }
+
+            bool is_cw = (q % 4 == 0) || (q % 4 == 3);
+            bool is_decel = (q % 4 == 0) || (q % 4 == 2);
+
+            gpio_set_level(ctx->gpio_dir, is_cw ? STEP_MOTOR_SPIN_DIR_CLOCKWISE : STEP_MOTOR_SPIN_DIR_COUNTERCLOCKWISE);
+
+            for (int i = 0; i < Q_SEGMENTS; i++) {
+                int idx = is_decel ? i : (Q_SEGMENTS - 1 - i);
+                if (q_steps[idx] > 0 && q_speeds[idx] > 0) {
+                    for (uint32_t s = 0; s < q_steps[idx]; s++) {
+                        rmt_transmit(ctx->motor_chan, ctx->uniform_motor_encoder, &q_speeds[idx], sizeof(q_speeds[idx]), &tx_config);
+                    }
+                }
+            }
+            rmt_tx_wait_all_done(ctx->motor_chan, -1);
+            q++;
+        }
+    }
+
+    gpio_set_level(ctx->gpio_en, !STEP_MOTOR_ENABLE_LEVEL);
+    ESP_LOGI(TAG, "Real-Time Seismic Profile Completed!");
+    return ESP_OK;
+}
+
 void stepper_rmt_task_1(void *arg)
 {
     // Initialize Motor 1 with the configured pins
@@ -328,6 +437,16 @@ void stepper_rmt_task_1(void *arg)
     shake_table_config_t my_table;
     kinematics_init_axis(&my_table.axis_x, 33.0f, 66.0f); // 33mm peak-to-peak displacement, 66mm rod length
     kinematics_init_stepper(&my_table.stepper_x, 1.8f, 32); // 1.8 degree step, 32 microsteps
+
+    // Configuração do ADC1 (Vamos usar o GPIO 34 = ADC1_CHANNEL_6)
+    if (s_adc1_handle == NULL) {
+        adc_oneshot_unit_init_cfg_t init_config1 = { .unit_id = ADC_UNIT_1 };
+        ESP_ERROR_CHECK(adc_oneshot_new_unit(&init_config1, &s_adc1_handle));
+    }
+
+    adc_oneshot_chan_cfg_t adc_cfg = { .bitwidth = ADC_BITWIDTH_DEFAULT, .atten = ADC_ATTEN_DB_12 };
+    // Recomendado: Usar GPIO34 em vez do GPIO12
+    ESP_ERROR_CHECK(adc_oneshot_config_channel(s_adc1_handle, ADC_CHANNEL_6, &adc_cfg));
 
     // Execute Homing calibration on startup
     if (motor1) {
@@ -351,7 +470,10 @@ void stepper_rmt_task_1(void *arg)
             //--- End Test---
             
             // Test Seismic Profile: Amplitude 32.0mm, Frequency 2.0 Hz, Duration 5 Seconds
-            stepper_rmt_run_sine_profile(motor1, 32.0f, 2.0f, 5.0f, &my_table);
+            //stepper_rmt_run_sine_profile(motor1, 32.0f, 2.0f, 5.0f, &my_table);
+            
+            // Real-Time Seismic Profile: Amplitude 16.0mm, Duration: 10 sec, Dynamic frequency manage by ADC between 0.5Hz to 5.0Hz
+            stepper_rmt_run_realtime_sine_profile(motor1, 16.0f, 10.0f, s_adc1_handle, ADC_CHANNEL_6, 0.5f, 5.0f, &my_table);
             //--- End Test ---
         }
         
@@ -370,16 +492,22 @@ void stepper_rmt_task_2(void *arg)
     kinematics_init_axis(&my_table.axis_x, 33.0f, 66.0f); // 33mm peak-to-peak displacement, 66mm rod length
     kinematics_init_stepper(&my_table.stepper_x, 1.8f, 32); // 1.8 degree step, 32 microsteps
 
+    // Configuração do ADC1 (Vamos usar o GPIO 39 = ADC1_CHANNEL_3)
+    
+    adc_oneshot_chan_cfg_t adc_cfg = { .bitwidth = ADC_BITWIDTH_DEFAULT, .atten = ADC_ATTEN_DB_12 };
+    // Utilizando o GPIO 39 (Pino Input-Only, seguro para ADC e Wi-Fi)
+    ESP_ERROR_CHECK(adc_oneshot_config_channel(s_adc1_handle, ADC_CHANNEL_3, &adc_cfg));
+
     // Execute Homing calibration on startup
     if (motor2) {
         stepper_rmt_homing(motor2, 27, 33);
     }
-
     while (1) {
         // Smaller STEPPER
         // Button (GPIO 21) has an active internal PULL-UP, so it reads 0 when pressed
         if (motor2 && gpio_get_level(GPIO_NUM_21) == 0) {
             gpio_set_level(GPIO_NUM_26, 1); // Turn LED on
+
             // Simple test for turn motor clockwise and counterclockwise
         /*  gpio_set_level(motor2->gpio_en, STEP_MOTOR_ENABLE_LEVEL); // Enable Motor 2 driver
             stepper_rmt_run_steps(motor2, 1500, 5000, 500, 500, true);
@@ -387,11 +515,13 @@ void stepper_rmt_task_2(void *arg)
             stepper_rmt_run_steps(motor2, 1500, 5000, 500, 500, false);
             vTaskDelay(pdMS_TO_TICKS(1000));
             gpio_set_level(motor2->gpio_en, !STEP_MOTOR_ENABLE_LEVEL); // Disable driver after finished
-        */
-            //---End Test---
+        */  //---End Test---
 
             // Test Seismic Profile: Amplitude 32.0mm, Frequency 2.0 Hz, Duration 5 Seconds
-            stepper_rmt_run_sine_profile(motor2, 32.0f, 2.0f, 5.0f, &my_table);        
+            //stepper_rmt_run_sine_profile(motor2, 32.0f, 2.0f, 5.0f, &my_table);        
+            
+            // Real-Time Seismic Profile: Amplitude 32.0mm, Duration: 10 Segundos, Dynamic frequency manage by ADC between 0.5Hz to 5.0Hz        
+            stepper_rmt_run_realtime_sine_profile(motor2, 33.0f, 10.0f, s_adc1_handle, ADC_CHANNEL_3, 0.5f, 5.0f, &my_table);        
             //--- End Test ---
         }
         
