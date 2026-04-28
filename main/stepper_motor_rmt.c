@@ -26,6 +26,10 @@
 
 static const char *TAG = "DRV8825_RMT";
 
+// Usar 'volatile' avisa o compilador que esta variável pode ser alterada
+// a qualquer momento por outra Task (neste caso, a rx_task do UART/Nextion)
+volatile int8_t nextion_profile = 5;
+
 // Handle global partilhado do ADC1 para ambas as tasks
 static adc_oneshot_unit_handle_t s_adc1_handle = NULL;
 
@@ -429,6 +433,325 @@ esp_err_t stepper_rmt_run_realtime_sine_profile(stepper_rmt_context_t *ctx, floa
     return ESP_OK;
 }
 
+esp_err_t stepper_rmt_run_trapezoidal_freq_profile(stepper_rmt_context_t *ctx, float target_p2p_mm, float start_freq_hz, float cruise_freq_hz, float accel_time_s, float cruise_time_s, float decel_time_s, const shake_table_config_t *table_config)
+{
+    if (!ctx || !table_config) return ESP_ERR_INVALID_ARG;
+
+    float max_p2p = table_config->axis_x.peak_to_peak_disp_mm;
+    if (target_p2p_mm > max_p2p) target_p2p_mm = max_p2p;
+
+    float total_time_s = accel_time_s + cruise_time_s + decel_time_s;
+    ESP_LOGI(TAG, "Trapezoidal Freq Profile: P2P=%.2fmm, Freq=%.2f->%.2fHz, Time=%.2fs (A=%.1f, C=%.1f, D=%.1f)",
+             target_p2p_mm, start_freq_hz, cruise_freq_hz, total_time_s, accel_time_s, cruise_time_s, decel_time_s);
+
+    gpio_set_level(ctx->gpio_en, STEP_MOTOR_ENABLE_LEVEL);
+    vTaskDelay(pdMS_TO_TICKS(50));
+
+    int64_t start_time_us = esp_timer_get_time();
+    int64_t total_duration_us = (int64_t)(total_time_s * 1000000.0f);
+    rmt_transmit_config_t tx_config = { .loop_count = 0 };
+
+    // Rotação Contínua (Amplitude Máxima)
+    if (target_p2p_mm >= max_p2p - 0.1f) {
+        while (1) {
+            int64_t elapsed_us = esp_timer_get_time() - start_time_us;
+            if (elapsed_us >= total_duration_us) break;
+
+            float t = (float)elapsed_us / 1000000.0f;
+            float freq_hz = start_freq_hz;
+            
+            if (t < accel_time_s) {
+                freq_hz = start_freq_hz + (cruise_freq_hz - start_freq_hz) * (t / accel_time_s);
+            } else if (t < accel_time_s + cruise_time_s) {
+                freq_hz = cruise_freq_hz;
+            } else {
+                float decel_t = t - accel_time_s - cruise_time_s;
+                freq_hz = cruise_freq_hz - (cruise_freq_hz - start_freq_hz) * (decel_t / decel_time_s);
+            }
+            
+            if (freq_hz < 0.1f) freq_hz = 0.1f; // Prevenir divisão por 0 e limites RMT
+            uint32_t speed_hz = (uint32_t)(table_config->stepper_x.microsteps_per_rev * freq_hz);
+            uint32_t chunk_steps = (uint32_t)(speed_hz * 0.1f);
+            if(chunk_steps == 0) chunk_steps = 1;
+            stepper_rmt_run_steps(ctx, speed_hz, chunk_steps, 0, 0, true);
+        }
+    } 
+    // Oscilação Parcial
+    else {
+        float r = table_config->axis_x.max_amplitude_mm;
+        float A = target_p2p_mm / 2.0f;
+        float s_amp = (asinf(A / r) / (2.0f * PI_MATH)) * table_config->stepper_x.microsteps_per_rev;
+
+        #define Q_SEGMENTS 20
+        uint32_t q_steps[Q_SEGMENTS];
+        uint32_t q_speeds[Q_SEGMENTS];
+        float accum = 0.0f;
+        int q = 0;
+
+        while (1) {
+            int64_t elapsed_us = esp_timer_get_time() - start_time_us;
+            if (q > 0 && (q % 4 == 0) && elapsed_us >= total_duration_us) break;
+
+            float t = (float)elapsed_us / 1000000.0f;
+            float freq_hz = start_freq_hz;
+            
+            if (t < accel_time_s) {
+                freq_hz = start_freq_hz + (cruise_freq_hz - start_freq_hz) * (t / accel_time_s);
+            } else if (t < accel_time_s + cruise_time_s) {
+                freq_hz = cruise_freq_hz;
+            } else if (t < total_time_s) {
+                float decel_t = t - accel_time_s - cruise_time_s;
+                freq_hz = cruise_freq_hz - (cruise_freq_hz - start_freq_hz) * (decel_t / decel_time_s);
+            }
+            if (freq_hz < 0.1f) freq_hz = 0.1f;
+
+            float dt = (1.0f / freq_hz / 4.0f) / Q_SEGMENTS;
+            for (int i = 0; i < Q_SEGMENTS; i++) {
+                float s1 = s_amp * sinf((PI_MATH / 2.0f) * ((float)i / Q_SEGMENTS));
+                float s2 = s_amp * sinf((PI_MATH / 2.0f) * ((float)(i + 1) / Q_SEGMENTS));
+                accum += (s2 - s1);
+                uint32_t steps = (uint32_t)floorf(accum);
+                accum -= steps;
+                q_steps[i] = steps;
+                q_speeds[i] = steps > 0 ? (uint32_t)((float)steps / dt) : 0;
+                if (q_speeds[i] > 0 && q_speeds[i] < 10) q_speeds[i] = 10;
+            }
+
+            gpio_set_level(ctx->gpio_dir, (q % 4 == 0 || q % 4 == 3) ? STEP_MOTOR_SPIN_DIR_CLOCKWISE : STEP_MOTOR_SPIN_DIR_COUNTERCLOCKWISE);
+            bool is_decel = (q % 4 == 0 || q % 4 == 2);
+            for (int i = 0; i < Q_SEGMENTS; i++) {
+                int idx = is_decel ? i : (Q_SEGMENTS - 1 - i);
+                for (uint32_t s = 0; s < q_steps[idx]; s++)
+                    rmt_transmit(ctx->motor_chan, ctx->uniform_motor_encoder, &q_speeds[idx], sizeof(q_speeds[idx]), &tx_config);
+            }
+            rmt_tx_wait_all_done(ctx->motor_chan, -1);
+            q++;
+        }
+    }
+    gpio_set_level(ctx->gpio_en, !STEP_MOTOR_ENABLE_LEVEL);
+    ESP_LOGI(TAG, "Trapezoidal Freq Profile Completed!");
+    return ESP_OK;
+}
+
+esp_err_t stepper_rmt_run_multistep_freq_profile(stepper_rmt_context_t *ctx, float target_p2p_mm, const float *freqs_hz, const float *times_s, uint8_t num_stages, float total_duration_s, float blend_time_s, const shake_table_config_t *table_config)
+{
+    if (!ctx || !table_config || !freqs_hz || !times_s || num_stages == 0) return ESP_ERR_INVALID_ARG;
+
+    float max_p2p = table_config->axis_x.peak_to_peak_disp_mm;
+    if (target_p2p_mm > max_p2p) target_p2p_mm = max_p2p;
+
+    ESP_LOGI(TAG, "Multi-Step Freq Profile: P2P=%.2fmm, Stages=%d, TotalDur=%.2fs, Blend=%.2fs",
+             target_p2p_mm, num_stages, total_duration_s, blend_time_s);
+
+    gpio_set_level(ctx->gpio_en, STEP_MOTOR_ENABLE_LEVEL);
+    vTaskDelay(pdMS_TO_TICKS(50));
+
+    int64_t start_time_us = esp_timer_get_time();
+    int64_t total_duration_us = (int64_t)(total_duration_s * 1000000.0f);
+    int64_t blend_duration_us = (int64_t)(blend_time_s * 1000000.0f);
+
+    uint8_t stage_idx = 0;
+    int64_t stage_start_us = start_time_us;
+    int64_t current_stage_duration_us = (int64_t)(times_s[0] * 1000000.0f);
+    
+    float prev_freq_hz = 0.1f; // Ramp up from near-zero initially for safety
+    float current_freq = 0.1f;
+    rmt_transmit_config_t tx_config = { .loop_count = 0 };
+
+    // CASE 1: Continuous Rotation (Maximum Amplitude)
+    if (target_p2p_mm >= max_p2p - 0.1f) {
+        while (1) {
+            int64_t current_time = esp_timer_get_time();
+            int64_t elapsed_total_us = current_time - start_time_us;
+            if (elapsed_total_us >= total_duration_us) break;
+
+            int64_t elapsed_in_stage_us = current_time - stage_start_us;
+            if (elapsed_in_stage_us >= current_stage_duration_us) {
+                stage_idx = (stage_idx + 1) % num_stages;
+                stage_start_us = current_time;
+                current_stage_duration_us = (int64_t)(times_s[stage_idx] * 1000000.0f);
+                prev_freq_hz = current_freq; // Store actual frequency before stage jump
+                elapsed_in_stage_us = 0;
+            }
+
+            float freq_hz = freqs_hz[stage_idx];
+            if (elapsed_in_stage_us < blend_duration_us) {
+                float t_blend = (float)elapsed_in_stage_us / (float)blend_duration_us;
+                freq_hz = prev_freq_hz + (freqs_hz[stage_idx] - prev_freq_hz) * t_blend;
+            }
+            if (freq_hz < 0.1f) freq_hz = 0.1f; // Safety limit
+            current_freq = freq_hz;
+
+            uint32_t speed_hz = (uint32_t)(table_config->stepper_x.microsteps_per_rev * freq_hz);
+            uint32_t chunk_steps = (uint32_t)(speed_hz * 0.1f);
+            if (chunk_steps == 0) chunk_steps = 1;
+            stepper_rmt_run_steps(ctx, speed_hz, chunk_steps, 0, 0, true);
+        }
+    } 
+    // CASE 2: Partial Oscillation
+    else {
+        float r = table_config->axis_x.max_amplitude_mm;
+        float A = target_p2p_mm / 2.0f;
+        float s_amp = (asinf(A / r) / (2.0f * PI_MATH)) * table_config->stepper_x.microsteps_per_rev;
+
+        #define Q_SEGMENTS 20
+        uint32_t q_steps[Q_SEGMENTS];
+        uint32_t q_speeds[Q_SEGMENTS];
+        float accum = 0.0f;
+        int q = 0;
+
+        while (1) {
+            int64_t current_time = esp_timer_get_time();
+            int64_t elapsed_total_us = current_time - start_time_us;
+
+            // Sync stage jumps and termination ONLY when passing through table center (q % 4 == 0)
+            if (q > 0 && (q % 4 == 0)) {
+                if (elapsed_total_us >= total_duration_us) break;
+
+                int64_t elapsed_in_stage_us = current_time - stage_start_us;
+                if (elapsed_in_stage_us >= current_stage_duration_us) {
+                    stage_idx = (stage_idx + 1) % num_stages;
+                    stage_start_us = current_time;
+                    current_stage_duration_us = (int64_t)(times_s[stage_idx] * 1000000.0f);
+                    prev_freq_hz = current_freq; // Store actual frequency before stage jump
+                }
+            }
+
+            int64_t elapsed_in_stage_us = current_time - stage_start_us;
+            float freq_hz = freqs_hz[stage_idx];
+            if (elapsed_in_stage_us < blend_duration_us) {
+                float t_blend = (float)elapsed_in_stage_us / (float)blend_duration_us;
+                freq_hz = prev_freq_hz + (freqs_hz[stage_idx] - prev_freq_hz) * t_blend;
+            }
+            if (freq_hz < 0.1f) freq_hz = 0.1f; // Safety limit
+            current_freq = freq_hz;
+
+            float dt = (1.0f / freq_hz / 4.0f) / Q_SEGMENTS;
+            for (int i = 0; i < Q_SEGMENTS; i++) {
+                float s1 = s_amp * sinf((PI_MATH / 2.0f) * ((float)i / Q_SEGMENTS));
+                float s2 = s_amp * sinf((PI_MATH / 2.0f) * ((float)(i + 1) / Q_SEGMENTS));
+                accum += (s2 - s1);
+                uint32_t steps = (uint32_t)floorf(accum);
+                accum -= steps;
+                q_steps[i] = steps;
+                q_speeds[i] = steps > 0 ? (uint32_t)((float)steps / dt) : 0;
+                if (q_speeds[i] > 0 && q_speeds[i] < 10) q_speeds[i] = 10;
+            }
+
+            gpio_set_level(ctx->gpio_dir, (q % 4 == 0 || q % 4 == 3) ? STEP_MOTOR_SPIN_DIR_CLOCKWISE : STEP_MOTOR_SPIN_DIR_COUNTERCLOCKWISE);
+            bool is_decel = (q % 4 == 0 || q % 4 == 2);
+            for (int i = 0; i < Q_SEGMENTS; i++) {
+                int idx = is_decel ? i : (Q_SEGMENTS - 1 - i);
+                for (uint32_t s = 0; s < q_steps[idx]; s++) {
+                    rmt_transmit(ctx->motor_chan, ctx->uniform_motor_encoder, &q_speeds[idx], sizeof(q_speeds[idx]), &tx_config);
+                }
+            }
+            rmt_tx_wait_all_done(ctx->motor_chan, -1);
+            q++;
+        }
+    }
+    
+    gpio_set_level(ctx->gpio_en, !STEP_MOTOR_ENABLE_LEVEL);
+    ESP_LOGI(TAG, "Multi-Step Freq Profile Completed!");
+    return ESP_OK;
+}
+
+esp_err_t stepper_rmt_run_sweep_profile(stepper_rmt_context_t *ctx, float target_p2p_mm, float start_freq_hz, float end_freq_hz, float duration_s, bool is_bidirectional, const shake_table_config_t *table_config)
+{
+    if (!ctx || !table_config || start_freq_hz <= 0 || end_freq_hz <= 0 || duration_s <= 0) return ESP_ERR_INVALID_ARG;
+
+    float max_p2p = table_config->axis_x.peak_to_peak_disp_mm;
+    if (target_p2p_mm > max_p2p) target_p2p_mm = max_p2p;
+
+    ESP_LOGI(TAG, "Logarithmic Sweep Profile: P2P=%.2fmm, Freq=%.2f->%.2fHz, Dur=%.2fs, Bidir=%d",
+             target_p2p_mm, start_freq_hz, end_freq_hz, duration_s, is_bidirectional);
+
+    gpio_set_level(ctx->gpio_en, STEP_MOTOR_ENABLE_LEVEL);
+    vTaskDelay(pdMS_TO_TICKS(50));
+
+    int64_t start_time_us = esp_timer_get_time();
+    int64_t total_duration_us = is_bidirectional ? (int64_t)(duration_s * 2.0f * 1000000.0f) : (int64_t)(duration_s * 1000000.0f);
+    rmt_transmit_config_t tx_config = { .loop_count = 0 };
+
+    // CASE 1: Continuous Rotation (Maximum Amplitude)
+    if (target_p2p_mm >= max_p2p - 0.1f) {
+        while (1) {
+            int64_t elapsed_us = esp_timer_get_time() - start_time_us;
+            if (elapsed_us >= total_duration_us) break;
+
+            float t = (float)elapsed_us / 1000000.0f;
+            if (is_bidirectional) {
+                if (t > duration_s) t = (2.0f * duration_s) - t; // Descending phase
+            }
+
+            float norm_t = t / duration_s;
+            if (norm_t > 1.0f) norm_t = 1.0f;
+
+            // Always calculate frequency strictly Logarithmic
+            float freq_hz = start_freq_hz * powf(end_freq_hz / start_freq_hz, norm_t);
+            
+            if (freq_hz < 0.1f) freq_hz = 0.1f;
+            uint32_t speed_hz = (uint32_t)(table_config->stepper_x.microsteps_per_rev * freq_hz);
+            uint32_t chunk_steps = (uint32_t)(speed_hz * 0.1f);
+            if(chunk_steps == 0) chunk_steps = 1;
+            stepper_rmt_run_steps(ctx, speed_hz, chunk_steps, 0, 0, true);
+        }
+    } 
+    // CASE 2: Partial Oscillation
+    else {
+        float r = table_config->axis_x.max_amplitude_mm;
+        float A = target_p2p_mm / 2.0f;
+        float s_amp = (asinf(A / r) / (2.0f * PI_MATH)) * table_config->stepper_x.microsteps_per_rev;
+
+        #define Q_SEGMENTS 20
+        uint32_t q_steps[Q_SEGMENTS];
+        uint32_t q_speeds[Q_SEGMENTS];
+        float accum = 0.0f;
+        int q = 0;
+
+        while (1) {
+            int64_t elapsed_us = esp_timer_get_time() - start_time_us;
+            if (q > 0 && (q % 4 == 0) && elapsed_us >= total_duration_us) break;
+
+            float t = (float)elapsed_us / 1000000.0f;
+            if (is_bidirectional) {
+                if (t > duration_s) t = (2.0f * duration_s) - t; // Descending phase
+            }
+
+            float norm_t = t / duration_s;
+            if (norm_t > 1.0f) norm_t = 1.0f;
+
+            // Always calculate frequency strictly Logarithmic
+            float freq_hz = start_freq_hz * powf(end_freq_hz / start_freq_hz, norm_t);
+            if (freq_hz < 0.1f) freq_hz = 0.1f;
+
+            float dt = (1.0f / freq_hz / 4.0f) / Q_SEGMENTS;
+            for (int i = 0; i < Q_SEGMENTS; i++) {
+                float s1 = s_amp * sinf((PI_MATH / 2.0f) * ((float)i / Q_SEGMENTS));
+                float s2 = s_amp * sinf((PI_MATH / 2.0f) * ((float)(i + 1) / Q_SEGMENTS));
+                accum += (s2 - s1);
+                uint32_t steps = (uint32_t)floorf(accum);
+                accum -= steps;
+                q_steps[i] = steps;
+                q_speeds[i] = steps > 0 ? (uint32_t)((float)steps / dt) : 0;
+                if (q_speeds[i] > 0 && q_speeds[i] < 10) q_speeds[i] = 10;
+            }
+
+            gpio_set_level(ctx->gpio_dir, (q % 4 == 0 || q % 4 == 3) ? STEP_MOTOR_SPIN_DIR_CLOCKWISE : STEP_MOTOR_SPIN_DIR_COUNTERCLOCKWISE);
+            bool is_decel = (q % 4 == 0 || q % 4 == 2);
+            for (int i = 0; i < Q_SEGMENTS; i++) {
+                int idx = is_decel ? i : (Q_SEGMENTS - 1 - i);
+                for (uint32_t s = 0; s < q_steps[idx]; s++) rmt_transmit(ctx->motor_chan, ctx->uniform_motor_encoder, &q_speeds[idx], sizeof(q_speeds[idx]), &tx_config);
+            }
+            rmt_tx_wait_all_done(ctx->motor_chan, -1);
+            q++;
+        }
+    }
+    gpio_set_level(ctx->gpio_en, !STEP_MOTOR_ENABLE_LEVEL);
+    ESP_LOGI(TAG, "Logarithmic Sweep Profile Completed!");
+    return ESP_OK;
+}
+
 void stepper_rmt_task_1(void *arg)
 {
     // Initialize Motor 1 with the configured pins
@@ -459,24 +782,52 @@ void stepper_rmt_task_1(void *arg)
         if (motor1 && gpio_get_level(GPIO_NUM_14) == 0) {
             gpio_set_level(GPIO_NUM_25, 1); // Turn LED on
 
-            // Simple test for turn motor clockwise and counterclockwise
-            /*gpio_set_level(motor1->gpio_en, STEP_MOTOR_ENABLE_LEVEL); // Enable Motor 1 driver
-            stepper_rmt_run_steps(motor1, 1500, 5000, 500, 500, true);
-            vTaskDelay(pdMS_TO_TICKS(1000));
-            stepper_rmt_run_steps(motor1, 1500, 5000, 500, 500, false);
-            vTaskDelay(pdMS_TO_TICKS(1000));
-            gpio_set_level(motor1->gpio_en, !STEP_MOTOR_ENABLE_LEVEL); // Disable driver after finished
-            */
-            //--- End Test---
-            
-            // Test Seismic Profile: Amplitude 32.0mm, Frequency 2.0 Hz, Duration 5 Seconds
-            //stepper_rmt_run_sine_profile(motor1, 32.0f, 2.0f, 5.0f, &my_table);
-            
-            // Real-Time Seismic Profile: Amplitude 16.0mm, Duration: 10 sec, Dynamic frequency manage by ADC between 0.5Hz to 5.0Hz
-            stepper_rmt_run_realtime_sine_profile(motor1, 16.0f, 10.0f, s_adc1_handle, ADC_CHANNEL_6, 0.5f, 5.0f, &my_table);
-            //--- End Test ---
+            switch (nextion_profile){
+                case 1:
+                    // Sine Profile
+                    // Example: Amplitude 32.0mm, Frequency 2.0 Hz, Duration 5 Seconds
+                    stepper_rmt_run_sine_profile(motor1, 32.0f, 2.0f, 5.0f, &my_table);
+                    break;
+                case 2: {
+                    // Multi-Step Frequency Profile (Non-Periodic Looping)
+                    // Example: 4 stages, looping for 60 seconds total. 0.5s transition blend time.
+                    float freqs[] = {1.0f, 2.5f, 4.0f, 1.5f};
+                    float times[] = {5.0f, 10.0f, 5.0f, 8.0f};
+                    // Note: This block uses { } to define local scope for the arrays inside the switch case.
+                    stepper_rmt_run_multistep_freq_profile(motor1, 16.0f, freqs, times, 4, 60.0f, 0.5f, &my_table);
+                    break;
+                }
+                case 3:
+                    // Trapezoidal Freq Profile
+                    // Exemplo: 16mm P2P, de 0.5Hz até 3.0Hz. (3s para acelerar, 5s constante, 3s para travar)
+                    stepper_rmt_run_trapezoidal_freq_profile(motor1, 16.0f, 0.5f, 3.0f, 3.0f, 5.0f, 3.0f, &my_table);
+                    break;
+                case 4:
+                    // Real-Time Sine Profile (Analog control with potenciometer B10k)
+                    //Amplitude 16.0mm, Duration: 10 sec, Dynamic frequency manage by ADC between 0.5Hz to 5.0Hz
+                    stepper_rmt_run_realtime_sine_profile(motor1, 16.0f, 10.0f, s_adc1_handle, ADC_CHANNEL_6, 0.5f, 5.0f, &my_table);
+                    break;
+                case 5:
+                    // Sweep / Chirp Profile (IEC/ISO Standard Logarithmic Sweep)
+                    // Example: 16mm P2P, from 0.5Hz to 10.0Hz, 30 seconds duration, Bidirectional (Ping-Pong) = true
+                    stepper_rmt_run_sweep_profile(motor1, 16.0f, 0.5f, 10.0f, 30.0f, true, &my_table);
+                    break;
+                case 6:
+                    // Reading from file (e.g. CSV..)
+                    break;
+                default:
+                    // 
+                    // Simple test for turn motor clockwise and counterclockwise
+                    /*gpio_set_level(motor1->gpio_en, STEP_MOTOR_ENABLE_LEVEL); // Enable Motor 1 driver
+                    stepper_rmt_run_steps(motor1, 1500, 5000, 500, 500, true);
+                    vTaskDelay(pdMS_TO_TICKS(1000));
+                    stepper_rmt_run_steps(motor1, 1500, 5000, 500, 500, false);
+                    vTaskDelay(pdMS_TO_TICKS(1000));
+                    gpio_set_level(motor1->gpio_en, !STEP_MOTOR_ENABLE_LEVEL); // Disable driver after finished
+                    */
+                    break;
+            }        
         }
-        
         gpio_set_level(GPIO_NUM_25, 0); // Turn LED off
         // Essential delay to yield CPU to other tasks when idle
         vTaskDelay(pdMS_TO_TICKS(10));
@@ -491,6 +842,13 @@ void stepper_rmt_task_2(void *arg)
     shake_table_config_t my_table;
     kinematics_init_axis(&my_table.axis_x, 33.0f, 66.0f); // 33mm peak-to-peak displacement, 66mm rod length
     kinematics_init_stepper(&my_table.stepper_x, 1.8f, 32); // 1.8 degree step, 32 microsteps
+
+    // Atraso curto para dar prioridade de inicialização à Task 1, mas garante segurança se a Task 2 for mais rápida
+    vTaskDelay(pdMS_TO_TICKS(50));
+    if (s_adc1_handle == NULL) {
+        adc_oneshot_unit_init_cfg_t init_config1 = { .unit_id = ADC_UNIT_1 };
+        ESP_ERROR_CHECK(adc_oneshot_new_unit(&init_config1, &s_adc1_handle));
+    }
 
     // Configuração do ADC1 (Vamos usar o GPIO 39 = ADC1_CHANNEL_3)
     
@@ -507,24 +865,53 @@ void stepper_rmt_task_2(void *arg)
         // Button (GPIO 21) has an active internal PULL-UP, so it reads 0 when pressed
         if (motor2 && gpio_get_level(GPIO_NUM_21) == 0) {
             gpio_set_level(GPIO_NUM_26, 1); // Turn LED on
-
-            // Simple test for turn motor clockwise and counterclockwise
-        /*  gpio_set_level(motor2->gpio_en, STEP_MOTOR_ENABLE_LEVEL); // Enable Motor 2 driver
-            stepper_rmt_run_steps(motor2, 1500, 5000, 500, 500, true);
-            vTaskDelay(pdMS_TO_TICKS(1000));
-            stepper_rmt_run_steps(motor2, 1500, 5000, 500, 500, false);
-            vTaskDelay(pdMS_TO_TICKS(1000));
-            gpio_set_level(motor2->gpio_en, !STEP_MOTOR_ENABLE_LEVEL); // Disable driver after finished
-        */  //---End Test---
-
-            // Test Seismic Profile: Amplitude 32.0mm, Frequency 2.0 Hz, Duration 5 Seconds
-            //stepper_rmt_run_sine_profile(motor2, 32.0f, 2.0f, 5.0f, &my_table);        
             
-            // Real-Time Seismic Profile: Amplitude 32.0mm, Duration: 10 Segundos, Dynamic frequency manage by ADC between 0.5Hz to 5.0Hz        
-            stepper_rmt_run_realtime_sine_profile(motor2, 33.0f, 10.0f, s_adc1_handle, ADC_CHANNEL_3, 0.5f, 5.0f, &my_table);        
-            //--- End Test ---
+            switch (nextion_profile){
+                case 1:
+                    // Sine Profile
+                    // Example: Amplitude 32.0mm, Frequency 2.0 Hz, Duration 5 Seconds
+                    stepper_rmt_run_sine_profile(motor2, 32.0f, 2.0f, 5.0f, &my_table);
+                    break;
+                case 2: {
+                    // Multi-Step Frequency Profile (Non-Periodic Looping)
+                    // Example: 4 stages, looping for 60 seconds total. 0.5s transition blend time.
+                    float freqs[] = {1.0f, 2.5f, 4.0f, 1.5f};
+                    float times[] = {5.0f, 10.0f, 5.0f, 8.0f};
+                    stepper_rmt_run_multistep_freq_profile(motor2, 33.0f, freqs, times, 4, 60.0f, 0.5f, &my_table);
+                    break;
+                }
+                case 3:
+                    // Trapezoidal Freq Profile
+                    // Exemplo: 33mm P2P, de 0.5Hz até 3.0Hz. (3s para acelerar, 5s constante, 3s para travar)
+                    stepper_rmt_run_trapezoidal_freq_profile(motor2, 33.0f, 0.5f, 3.0f, 3.0f, 5.0f, 3.0f, &my_table);
+                    break;
+                case 4:
+                    // Real-Time Sine Profile (Analog control with potenciometer B10k)
+                    //  Example: Amplitude 32.0mm, Duration: 10 Segundos, Dynamic frequency manage by ADC between 0.5Hz to 5.0Hz        
+                    stepper_rmt_run_realtime_sine_profile(motor2, 33.0f, 10.0f, s_adc1_handle, ADC_CHANNEL_3, 0.5f, 5.0f, &my_table);        
+                    break;
+                case 5:
+                    // Sweep / Chirp Profile (IEC/ISO Standard Logarithmic Sweep)
+                    // Example: 33mm P2P, from 0.5Hz to 10.0Hz, 30 seconds duration, Bidirectional (Ping-Pong) = true
+                    stepper_rmt_run_sweep_profile(motor2, 33.0f, 0.5f, 10.0f, 30.0f, true, &my_table);
+                    break;
+                case 6:
+                    // Reading from file (e.g. CSV..)
+                    break;
+                default:
+                    // 
+                    // Simple test for turn motor clockwise and counterclockwise
+                    /*  
+                    gpio_set_level(motor2->gpio_en, STEP_MOTOR_ENABLE_LEVEL); // Enable Motor 2 driver
+                    stepper_rmt_run_steps(motor2, 1500, 5000, 500, 500, true);
+                    vTaskDelay(pdMS_TO_TICKS(1000));
+                    stepper_rmt_run_steps(motor2, 1500, 5000, 500, 500, false);
+                    vTaskDelay(pdMS_TO_TICKS(1000));
+                    gpio_set_level(motor2->gpio_en, !STEP_MOTOR_ENABLE_LEVEL); // Disable driver after finished
+                    */
+                    break;
+            }        
         }
-        
         gpio_set_level(GPIO_NUM_26, 0); // Turn LED off
         // Essential delay to yield CPU to other tasks when idle
         vTaskDelay(pdMS_TO_TICKS(10));
