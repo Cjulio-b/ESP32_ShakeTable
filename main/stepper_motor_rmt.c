@@ -809,8 +809,8 @@ void stepper_rmt_task_1(void *arg)
                     break;
                 case 5:
                     // Sweep / Chirp Profile (IEC/ISO Standard Logarithmic Sweep)
-                    // Example: 16mm P2P, from 0.5Hz to 10.0Hz, 30 seconds duration, Bidirectional (Ping-Pong) = true
-                    stepper_rmt_run_sweep_profile(motor1, 16.0f, 0.5f, 10.0f, 30.0f, true, &my_table);
+                    // Example: 16mm P2P, from 0.5Hz to 5.0Hz, 30 seconds duration, Bidirectional (Ping-Pong) = true
+                    stepper_rmt_run_sweep_profile(motor1, 16.0f, 0.5f, 5.0f, 30.0f, true, &my_table);
                     break;
                 case 6:
                     // Reading from file (e.g. CSV..)
@@ -893,7 +893,7 @@ void stepper_rmt_task_2(void *arg)
                 case 5:
                     // Sweep / Chirp Profile (IEC/ISO Standard Logarithmic Sweep)
                     // Example: 33mm P2P, from 0.5Hz to 10.0Hz, 30 seconds duration, Bidirectional (Ping-Pong) = true
-                    stepper_rmt_run_sweep_profile(motor2, 33.0f, 0.5f, 10.0f, 30.0f, true, &my_table);
+                    stepper_rmt_run_sweep_profile(motor2, 33.0f, 0.5f, 5.0f, 30.0f, true, &my_table);
                     break;
                 case 6:
                     // Reading from file (e.g. CSV..)
