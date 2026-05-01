@@ -1,4 +1,5 @@
 build/
+main/example_file
 *.elf
 *.bin
 *.map

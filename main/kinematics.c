@@ -78,3 +78,34 @@ float kinematics_calc_linear_position_relative_90(const shake_table_axis_config_
     // 3. Return the difference
     return current_abs_pos - pos_90_deg;
 }
+
+float kinematics_calc_inverse_position_relative_90(const shake_table_axis_config_t *axis, float target_relative_pos_mm) {
+    if (!axis) return 90.0f; // Default center position
+    
+    float r = axis->crank_radius_mm;
+    float l = axis->rod_length_mm;
+    
+    // 1. Calculate the absolute position at the center (motor at 90 degrees)
+    float pos_90_deg = sqrtf((l * l) - (r * r));
+    
+    // 2. Calculate the target absolute position
+    float x = pos_90_deg + target_relative_pos_mm;
+    
+    // Safety check: is the target position physically reachable?
+    // Max physical reach is l + r (0 degrees), Min reach is l - r (180 degrees)
+    if (x > (l + r)) x = l + r;
+    if (x < (l - r)) x = l - r;
+    
+    // 3. Inverse Kinematics Formula: cos(θ) = (x² + r² - l²) / (2 * x * r)
+    float cos_theta = ((x * x) + (r * r) - (l * l)) / (2.0f * x * r);
+    
+    // Clamp cos_theta to [-1.0, 1.0] to prevent acosf domain errors due to floating point precision
+    if (cos_theta > 1.0f) cos_theta = 1.0f;
+    if (cos_theta < -1.0f) cos_theta = -1.0f;
+    
+    // 4. Calculate the angle in radians and convert to degrees
+    float angle_rad = acosf(cos_theta);
+    float angle_deg = angle_rad * (180.0f / PI);
+    
+    return angle_deg;
+}

@@ -55,4 +55,9 @@ float kinematics_calc_linear_position(const shake_table_axis_config_t *axis, flo
  */
 float kinematics_calc_linear_position_relative_90(const shake_table_axis_config_t *axis, float angle_deg);
 
+/**
+ * @brief Calculates the required motor angle (in degrees) to reach a target linear position (relative to 90 degrees)
+ */
+float kinematics_calc_inverse_position_relative_90(const shake_table_axis_config_t *axis, float target_relative_pos_mm);
+
 #endif /* KINEMATICS_H_ */

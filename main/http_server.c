@@ -46,6 +46,7 @@ httpd_handle_t start_webserver(void)
 #include <sys/param.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <dirent.h>
 #include "esp_http_server.h"
 
 #define TAG "Funcoes"
@@ -75,9 +76,33 @@ esp_err_t gpio_handler(httpd_req_t *req) {
 // Handler para Upload de Ficheiros
 // ========================
 esp_err_t upload_handler(httpd_req_t *req) {
-    FILE *fd = fopen("/storage/sismo.bin", "w");
+    char filename[128];
+    char filepath[512];
+    
+    // 1. Obter nome do ficheiro enviado pelo Browser via Header HTTP
+    if (httpd_req_get_hdr_value_str(req, "X-File-Name", filename, sizeof(filename)) != ESP_OK) {
+        strcpy(filename, "upload.bin"); // Fallback caso o browser não envie
+    }
+
+    // 2. Apagar ficheiros antigos no LittleFS para não acumular lixo
+    DIR *dir = opendir("/storage");
+    if (dir) {
+        struct dirent *ent;
+        while ((ent = readdir(dir)) != NULL) {
+            if (strcmp(ent->d_name, ".") != 0 && strcmp(ent->d_name, "..") != 0) {
+                char old_file[512];
+                snprintf(old_file, sizeof(old_file), "/storage/%s", ent->d_name);
+                unlink(old_file);
+            }
+        }
+        closedir(dir);
+    }
+
+    // 3. Abrir novo ficheiro para escrita com o nome original
+    snprintf(filepath, sizeof(filepath), "/storage/%s", filename);
+    FILE *fd = fopen(filepath, "w");
     if (!fd) {
-        ESP_LOGE(TAG, "Falha ao criar o ficheiro /storage/sismo.bin");
+        ESP_LOGE(TAG, "Falha ao criar o ficheiro %s", filepath);
         httpd_resp_send_500(req);
         return ESP_FAIL;
     }
@@ -111,12 +136,31 @@ esp_err_t upload_handler(httpd_req_t *req) {
 // Handler para Info do Ficheiro
 // ========================
 esp_err_t fileinfo_handler(httpd_req_t *req) {
-    struct stat st;
-    char resp[128];
-    if (stat("/storage/sismo.bin", &st) == 0) {
-        snprintf(resp, sizeof(resp), "{\"exists\": true, \"size\": %ld}", (long)st.st_size);
+    char resp[256];
+    DIR *dir = opendir("/storage");
+    struct dirent *ent;
+    char filename[128] = "";
+    long filesize = 0;
+    bool exists = false;
+
+    // Procurar o primeiro ficheiro presente na memória
+    if (dir) {
+        while ((ent = readdir(dir)) != NULL) {
+            if (strcmp(ent->d_name, ".") != 0 && strcmp(ent->d_name, "..") != 0) {
+                strncpy(filename, ent->d_name, sizeof(filename)-1);
+                char filepath[512];
+                snprintf(filepath, sizeof(filepath), "/storage/%s", ent->d_name);
+                struct stat st;
+                if (stat(filepath, &st) == 0) { filesize = st.st_size; exists = true; }
+                break;
+            }
+        }
+        closedir(dir);
+    }
+
+    if (exists) {
+        snprintf(resp, sizeof(resp), "{\"exists\": true, \"name\": \"%s\", \"size\": %ld}", filename, filesize);
     } else {
-        httpd_resp_sendstr(req, "Nenhum ficheiro para apagar.");
         snprintf(resp, sizeof(resp), "{\"exists\": false}");
     }
     httpd_resp_set_type(req, "application/json");
@@ -149,15 +193,16 @@ esp_err_t index_handler(httpd_req_t *req) {
         "<div id='gpio21' class='box'>GPIO21: --</div>"
         "<div id='gpio26' class='box'>GPIO26: --</div>"
         "<div class='upload-section'>"
-        "<h3>Upload de Sismo (.bin)</h3>"
+        "<h3>Upload de Sismo (.dat, .txt, .bin)</h3>"
         "<div id='fileStatus' style='margin-bottom:15px; padding:10px; background:#e0e0e0; border-radius:5px;'>"
         "Ficheiro atual: <span id='fileName'>A verificar...</span>"
         "</div>"
-        "<p style='font-size:0.9em; color:#555;'>Apenas ficheiros pré-processados (.bin). Tamanho Máx: 800 KB<br>"
+        "<p style='font-size:0.9em; color:#555;'>Ficheiros de texto (.dat/.txt) são convertidos automaticamente. <b>Tamanho Máx: 800 KB</b><br>"
         "<b>Nota: O upload de um novo ficheiro faz overwrite ao antigo.</b></p>"
-        "<input type='file' id='fileInput' accept='.bin'><br><br>"
+        "<input type='file' id='fileInput'><br><br>"
         "<button onclick='uploadFile()'>Enviar para a Mesa Sísmica</button>"
         "<p id='status' style='font-weight:bold;color:#333;'></p>"
+        "<pre id='logOutput' style='text-align:left; font-size:0.8em; background:#eee; padding:10px; border-radius:5px; display:none; overflow-x:auto;'></pre>"
         "</div>"
         "<script>"
         "async function atualizarGPIO(){"
@@ -176,7 +221,7 @@ esp_err_t index_handler(httpd_req_t *req) {
         "  try {"
         "    const res = await fetch('/fileinfo');"
         "    const data = await res.json();"
-        "    if(data.exists) document.getElementById('fileName').innerHTML = '<b>sismo.bin</b> (' + (data.size/1024).toFixed(2) + ' KB)';"
+        "    if(data.exists) document.getElementById('fileName').innerHTML = '<b>'+data.name+'</b> (' + (data.size/1024).toFixed(2) + ' KB)';"
         "    else document.getElementById('fileName').innerHTML = '<i>nenhum ficheiro armazenado</i>';"
         "  } catch(e) { document.getElementById('fileName').innerText = 'Erro ao verificar'; }"
         "}"
@@ -185,10 +230,89 @@ esp_err_t index_handler(httpd_req_t *req) {
         "  const el = document.getElementById('fileInput');"
         "  if(el.files.length === 0) return alert('Selecione um ficheiro!');"
         "  const file = el.files[0];"
-        "  if(file.size > 800 * 1024) return alert('O ficheiro excede o limite de 800 KB!');"
+        "  let filename = file.name;"
+        "  let payload = file;"
+        "  let lowerName = filename.toLowerCase();"
+        /*"  if (lowerName.endsWith('.dat') || lowerName.endsWith('.txt')) {"
+        "    document.getElementById('status').innerText = 'A processar e a converter... aguarde.';"
+        "    const text = await file.text();"
+        "    const lines = text.split(/\\r?\\n/);"
+        "    let pos = [];"
+        "    let times = [];"
+        "    for (let line of lines) {"
+        "      line = line.trim();"
+        "      if (!line || line.startsWith('%') || line.startsWith('#') || line.toLowerCase().startsWith('time')) continue;"
+        "      line = line.replace(/,/g, '.');" // Troca as vírgulas por pontos decimais
+        "      let parts = line.split(/\\s+/);"
+        "      if (parts.length >= 2) {"
+        "        let t = parseFloat(parts[0]);"
+        "        let val = parseFloat(parts[1]);"
+        "        if (!isNaN(t) && !isNaN(val)) { times.push(t); pos.push(val); }"
+        "      } else if (parts.length === 1) {"
+        "        let val = parseFloat(parts[0]);"
+        "        if (!isNaN(val)) pos.push(val);"
+        "      }"
+        "    }"
+        "    if (pos.length === 0) { document.getElementById('status').innerText=''; return alert('Nenhum dado numérico encontrado.'); }"
+        "    let dt = 0.01;"
+        "    if (times.length >= 2) { dt = times[1] - times[0]; if (dt <= 0) dt = 0.01; }" // Calcula dt com base no Tempo
+        "    const buffer = new ArrayBuffer(8 + pos.length * 4);"
+        "    const view = new DataView(buffer);"
+        "    view.setUint32(0, pos.length, true);"
+        "    view.setFloat32(4, dt, true);"
+        "    for (let i=0; i<pos.length; i++) view.setFloat32(8 + i * 4, pos[i], true);"
+        "    payload = new Blob([buffer]);"
+        "    filename = filename.substring(0, filename.lastIndexOf('.')) + '.bin';"
+        "  }"*/
+        "  if (!lowerName.endsWith('.bin')) {"
+        "    try {"
+        "      document.getElementById('status').innerText = 'A processar e a converter... aguarde.';"
+        "      const text = await file.text();"
+        "      const lines = text.split(/\\r?\\n/);"
+        "      let pos = []; let times = [];"
+        "      for (let line of lines) {"
+        "        line = line.trim();"
+        "        if (!line || line.startsWith('%') || line.startsWith('#') || line.match(/^[a-zA-Z]/)) continue;"
+        "        line = line.replace(/,/g, '.');"
+        "        let parts = line.split(/\\s+/);"
+        "        if (parts.length >= 2) {"
+        "          let t = parseFloat(parts[0]); let val = parseFloat(parts[1]);"
+        "          if (!isNaN(t) && !isNaN(val)) { times.push(t); pos.push(val); }"
+        "        } else if (parts.length === 1) {"
+        "          let val = parseFloat(parts[0]);"
+        "          if (!isNaN(val)) pos.push(val);"
+        "        }"
+        "      }"
+        "      if (pos.length === 0) { document.getElementById('status').innerText=''; return alert('Nenhum dado numérico encontrado.'); }"
+        "      let dt = 0.01;"
+        "      if (times.length >= 2) { dt = times[1] - times[0]; if (dt <= 0) dt = 0.01; }"
+        "      let logText = '--- Verificação da Conversão ---\\n';"
+        "      logText += 'dt: ' + dt.toFixed(5) + ' s\\n';"
+        "      logText += 'Pontos: ' + pos.length + '\\n';"
+        "      logText += 'Primeiras 10 linhas:\\n';"
+        "      for(let i=0; i<Math.min(10, pos.length); i++) {"
+        "          logText += (times.length > i ? times[i] : 'N/A') + ' \\t ' + pos[i] + '\\n';"
+        "      }"
+        "      console.log(logText);"
+        "      const logEl = document.getElementById('logOutput');"
+        "      logEl.innerText = logText; logEl.style.display = 'block';"
+        "      const buffer = new ArrayBuffer(8 + pos.length * 4);"
+        "      const view = new DataView(buffer);"
+        "      view.setUint32(0, pos.length, true);"
+        "      view.setFloat32(4, dt, true);"
+        "      for (let i=0; i<pos.length; i++) view.setFloat32(8 + i * 4, pos[i], true);"
+        "      payload = new Blob([buffer], {type: 'application/octet-stream'});"
+        "      let dotIdx = filename.lastIndexOf('.');"
+        "      if(dotIdx > 0) filename = filename.substring(0, dotIdx) + '.bin';"
+        "      else filename = filename + '.bin';"
+        "    } catch(e) {"
+        "      document.getElementById('status').innerText=''; return alert('Erro no processamento: ' + e.message);"
+        "    }"
+        "  }"
+        "  if(payload.size > 800 * 1024) return alert('O ficheiro excede o limite de 800 KB!');"
         "  document.getElementById('status').innerText = 'A enviar ' + file.name + '... aguarde.';"
         "  try {"
-        "    const res = await fetch('/upload', { method: 'POST', body: file });"
+        "    const res = await fetch('/upload', { method: 'POST', headers: {'X-File-Name': filename}, body: payload });"
         "    if(res.ok) { document.getElementById('status').innerText = await res.text(); checkFile(); }"
         "    else document.getElementById('status').innerText = 'Erro do Servidor: ' + res.status;"
         "  } catch(e) {"
@@ -209,6 +333,7 @@ esp_err_t index_handler(httpd_req_t *req) {
 // ========================
 httpd_handle_t start_webserver(void) {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+    config.stack_size = 8192; // Aumentar a stack do servidor web para evitar overflow
     httpd_handle_t server = NULL;
 
     if (httpd_start(&server, &config) == ESP_OK) {
