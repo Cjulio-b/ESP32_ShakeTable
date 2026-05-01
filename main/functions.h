@@ -16,6 +16,9 @@ void check_current_config(void);
 void testing_led(void);
 void GPIO_init(void);
 
+// LittleFS functions -------------------------------------------
+void init_littlefs(void);
+
 // WIFI - HTTP Server functions ----------------------------------
 void start_wifi_ap(void);
 esp_err_t gpio_handler(httpd_req_t *req);

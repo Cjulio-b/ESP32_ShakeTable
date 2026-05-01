@@ -18,9 +18,10 @@ void app_main(void)
 {
 	GPIO_init(); //initialize GPIOs
 	check_current_config(); //print GPIO configuration
+	init_littlefs(); // Mount LittleFS Partition
 	init_uart();
-	//start_wifi_ap(); //start Wi-Fi
-	//start_webserver(); //start HTTP server
+	start_wifi_ap(); //start Wi-Fi
+	start_webserver(); //start HTTP server
 
 	// (1/2) --- Teste do stepper motor L298N half-step ------
     ESP_LOGI("STEPMOTOR", "Initializing L298N and stepper motor...");
