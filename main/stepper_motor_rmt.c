@@ -10,6 +10,9 @@
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <dirent.h>
 #include <math.h>
 #include "stepper_motor_encoder.h"
 #include "functions.h"
@@ -28,7 +31,7 @@ static const char *TAG = "DRV8825_RMT";
 
 // Usar 'volatile' avisa o compilador que esta variável pode ser alterada
 // a qualquer momento por outra Task (neste caso, a rx_task do UART/Nextion)
-volatile int8_t nextion_profile = 5;
+volatile int8_t nextion_profile = 6;
 
 // Handle global partilhado do ADC1 para ambas as tasks
 static adc_oneshot_unit_handle_t s_adc1_handle = NULL;
@@ -752,6 +755,128 @@ esp_err_t stepper_rmt_run_sweep_profile(stepper_rmt_context_t *ctx, float target
     return ESP_OK;
 }
 
+// =========================================================================
+// FUNÇÕES AUXILIARES PARA O CASE 6 (LEITURA DE FICHEIROS SÍSMICOS)
+// =========================================================================
+
+// Procura e devolve o caminho do primeiro ficheiro .bin no disco
+static bool get_stored_sismo_file(char* filepath_out, size_t max_len) {
+    DIR *dir = opendir("/storage");
+    if (!dir) return false;
+    
+    struct dirent *ent;
+    bool found = false;
+    while ((ent = readdir(dir)) != NULL) {
+        if (strstr(ent->d_name, ".bin") != NULL) {
+            snprintf(filepath_out, max_len, "/storage/%s", ent->d_name);
+            found = true;
+            break;
+        }
+    }
+    closedir(dir);
+    return found;
+}
+
+// Executa o perfil sísmico a partir do ficheiro
+esp_err_t stepper_rmt_run_file_profile(stepper_rmt_context_t *ctx, const char* filepath, const shake_table_config_t *table_config)
+{
+    if (!ctx || !table_config || !filepath) return ESP_ERR_INVALID_ARG;
+
+    FILE *f = fopen(filepath, "r");
+    if (!f) {
+        ESP_LOGE(TAG, "Falha ao abrir %s", filepath);
+        return ESP_FAIL;
+    }
+
+    uint32_t num_points = 0;
+    float dt = 0;
+
+    fread(&num_points, sizeof(uint32_t), 1, f);
+    fread(&dt, sizeof(float), 1, f);
+
+    if (num_points == 0 || dt <= 0.0f) {
+        ESP_LOGE(TAG, "Formato invalido ou dados vazios. Pontos: %lu, dt: %.4f", num_points, dt);
+        fclose(f);
+        return ESP_FAIL;
+    }
+
+    ESP_LOGI(TAG, "A Iniciar Perfil Sismico: %lu pontos, dt=%.4fs, tempo total=%.2fs", num_points, dt, num_points * dt);
+
+    gpio_set_level(ctx->gpio_en, STEP_MOTOR_ENABLE_LEVEL);
+    vTaskDelay(pdMS_TO_TICKS(50));
+
+    // O motor mecanicamente inicia no centro após o Homing (correspondente a 90 graus nas nossas contas)
+    float current_angle = 90.0f;
+    int32_t current_step = (int32_t)roundf((current_angle / 360.0f) * table_config->stepper_x.microsteps_per_rev);
+    
+    rmt_transmit_config_t tx_config = { .loop_count = 0 };
+    int64_t start_time_us = esp_timer_get_time();
+    uint32_t point_index = 0;
+
+    #define CHUNK_SIZE 100
+    float target_pos_chunk[CHUNK_SIZE];
+    uint32_t points_left = num_points;
+
+    while (points_left > 0) {
+        uint32_t to_read = (points_left > CHUNK_SIZE) ? CHUNK_SIZE : points_left;
+        size_t read_count = fread(target_pos_chunk, sizeof(float), to_read, f);
+        
+        if (read_count == 0) { ESP_LOGW(TAG, "Fim do ficheiro inesperado!"); break; }
+        
+        for (uint32_t i = 0; i < read_count; i++) {
+            float target_pos_mm = target_pos_chunk[i];
+            
+            // 1. Cinemática Inversa
+            float target_angle = kinematics_calc_inverse_position_relative_90(&table_config->axis_x, target_pos_mm);
+            int32_t target_step = (int32_t)roundf((target_angle / 360.0f) * table_config->stepper_x.microsteps_per_rev);
+            int32_t delta_steps = target_step - current_step;
+
+            // Debug: Imprimir a cada 10 pontos (0.1s) para não saturar a UART e afetar o timing do RMT
+            if (point_index % 10 == 0) {
+                float current_time_s = point_index * dt;
+                ESP_LOGI(TAG, "Tempo: %5.3fs | Pos: %7.4f mm | Angulo: %6.2f deg", current_time_s, target_pos_mm, target_angle);
+            }
+
+            // 2. Executar Movimento
+            if (delta_steps != 0) {
+                bool is_cw = (delta_steps > 0);
+                gpio_set_level(ctx->gpio_dir, is_cw ? STEP_MOTOR_SPIN_DIR_CLOCKWISE : STEP_MOTOR_SPIN_DIR_COUNTERCLOCKWISE);
+                
+                uint32_t steps_to_move = abs(delta_steps);
+                uint32_t freq_hz = (uint32_t)roundf((float)steps_to_move / dt);
+                if (freq_hz < 10) freq_hz = 10; // Frequência mínima de segurança do RMT
+
+                for (uint32_t s = 0; s < steps_to_move; s++) {
+                    rmt_transmit(ctx->motor_chan, ctx->uniform_motor_encoder, &freq_hz, sizeof(freq_hz), &tx_config);
+                }
+                current_step = target_step;
+            } else {
+                // Se o sismo tem uma pausa (0 deslocamento), sincronizamos o relógio no microsegundo exato
+                rmt_tx_wait_all_done(ctx->motor_chan, -1);
+                int64_t target_time_us = start_time_us + (int64_t)((point_index + 1) * dt * 1000000.0f);
+                int64_t delay_us = target_time_us - esp_timer_get_time();
+                if (delay_us > 0) {
+                    if (delay_us > 10000) vTaskDelay(pdMS_TO_TICKS(delay_us / 1000));
+                    else esp_rom_delay_us(delay_us);
+                }
+            }
+            
+            point_index++;
+            
+            // Quebra de segurança (Paragem de emergência por botão ou Nextion)
+            if (nextion_profile != 6) { points_left = 0; break; }
+        }
+        points_left -= read_count;
+    }
+
+    rmt_tx_wait_all_done(ctx->motor_chan, -1);
+    gpio_set_level(ctx->gpio_en, !STEP_MOTOR_ENABLE_LEVEL);
+    fclose(f);
+    ESP_LOGI(TAG, "Perfil Sismico do ficheiro concluido com sucesso!");
+    
+    return ESP_OK;
+}
+
 void stepper_rmt_task_1(void *arg)
 {
     // Initialize Motor 1 with the configured pins
@@ -813,8 +938,16 @@ void stepper_rmt_task_1(void *arg)
                     stepper_rmt_run_sweep_profile(motor1, 16.0f, 0.5f, 5.0f, 30.0f, true, &my_table);
                     break;
                 case 6:
-                    // Reading from file (e.g. CSV..)
+                {
+                    char filepath[256];
+                    if (get_stored_sismo_file(filepath, sizeof(filepath))) {
+                        stepper_rmt_run_file_profile(motor1, filepath, &my_table);
+                    } else {
+                        ESP_LOGW(TAG, "Nenhum ficheiro .bin encontrado na memoria para reproduzir!");
+                        vTaskDelay(pdMS_TO_TICKS(1000));
+                    }
                     break;
+                }
                 default:
                     // 
                     // Simple test for turn motor clockwise and counterclockwise
@@ -896,8 +1029,16 @@ void stepper_rmt_task_2(void *arg)
                     stepper_rmt_run_sweep_profile(motor2, 33.0f, 0.5f, 5.0f, 30.0f, true, &my_table);
                     break;
                 case 6:
-                    // Reading from file (e.g. CSV..)
+                {
+                    char filepath[256];
+                    if (get_stored_sismo_file(filepath, sizeof(filepath))) {
+                        stepper_rmt_run_file_profile(motor2, filepath, &my_table);
+                    } else {
+                        ESP_LOGW(TAG, "Nenhum ficheiro .bin encontrado na memoria para reproduzir!");
+                        vTaskDelay(pdMS_TO_TICKS(1000));
+                    }
                     break;
+                }
                 default:
                     // 
                     // Simple test for turn motor clockwise and counterclockwise
