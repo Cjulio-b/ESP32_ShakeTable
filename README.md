@@ -39,6 +39,16 @@ Notas para fazer mais tarde:
 8. Videos diferença entre Stepper motor NEMA 17, 23 e 34: https://www.youtube.com/watch?v=8wff-IcBTVo
 9. Qual é velocidade máxima stepper motor? https://www.youtube.com/watch?v=E7gTkXXCiaQ
 
+For using menuconfig in powershell:
+    cd C:\Users\cjulio\esp\v5.5.1\esp-idf
+
+    Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+
+    .\export.ps1
+
+    cd C:\Users\cjulio\Documents\cjulio\ESP32_ShakeTable
+
+    idf.py menuconfig
 
 
 

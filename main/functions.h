@@ -11,6 +11,14 @@
 // GLOBAL Variables -----------------------------------
 extern bool MonitorTask;
 
+// Nextion Profile Parameters -------------------------
+extern volatile int8_t nextion_profile;
+extern float nextion_target_freq_x;
+extern float nextion_target_freq_y;
+extern float nextion_target_disp_x;
+extern float nextion_target_disp_y;
+extern float nextion_target_time_s;
+
 // GPIO functions ---------------------------------------
 void check_current_config(void);
 void testing_led(void);
@@ -38,7 +46,7 @@ void rxFromNextion(const uint8_t *data, int len);
 void txToNextion(void);
 void nextion_cmd_syntax(const char *objname, const char *datatype, const char *value);
 uint16_t nextion_crc16_modbus(const uint8_t *data, size_t len);
-void sendAckToNextion(bool ok);
+void sendAckToNextion(int ackmsg);
 void return_data_from_nextion(const uint8_t *buff, int idx);
 
 // STEPPER MOTOR functions -----------------------------------------------
