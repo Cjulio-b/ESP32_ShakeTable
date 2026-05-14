@@ -1050,6 +1050,7 @@ void stepper_rmt_task_1(void *arg)
                 // Se o perfil não foi abortado a meio da espera, finaliza!
                 if (nextion_profile == current_profile) {
                     nextion_profile = 0; // Limpa o estado
+                    parameters_recv = false; // Rearme obrigatório: bloqueia novos arranques até os dados serem revalidados
                     ESP_LOGI(TAG, "Ensaio concluido com sucesso! A enviar ACK 164 (MOTION END) para o HMI.");
                     sendAckToNextion(164);
                 }
