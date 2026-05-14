@@ -20,6 +20,8 @@ extern float nextion_target_disp_y;
 extern float nextion_target_time_s;
 extern float nextion_multistep_freq_x[4];
 extern float nextion_multistep_freq_y[4];
+extern float nextion_multistep_time_x[4];
+extern float nextion_multistep_time_y[4];
 extern bool parameters_recv;
 
 // GPIO functions ---------------------------------------

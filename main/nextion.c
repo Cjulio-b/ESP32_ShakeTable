@@ -15,6 +15,8 @@ float nextion_target_disp_y = 0.0f;
 float nextion_target_time_s = 0.0f;
 float nextion_multistep_freq_x[4] = {0.0f, 0.0f, 0.0f, 0.0f};
 float nextion_multistep_freq_y[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+float nextion_multistep_time_x[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+float nextion_multistep_time_y[4] = {0.0f, 0.0f, 0.0f, 0.0f};
 bool parameters_recv = false;
 
 // CRC-16 Modbus (polinómio 0xA001, inicial 0xFFFF)
@@ -186,7 +188,18 @@ void rxFromNextion(const uint8_t *data, int len)
                         nextion_profile = 0; // Sinal de STOP (aborta loop nos motores)
                         parameters_recv = false;
                     }
-                }
+                } else if (page == 3) { // <-- SUBSTITUI 3 PELO ID DA PÁGINA MULTI-STEP NO NEXTION EDITOR
+                    if (component_id == 27 && event == 0 && parameters_recv) { // START button Multi-Step Profile (Substitui 16 pelo ID do botão)
+                        ESP_LOGI("NEXTION", "Start Multi-Step Profile Selected!");
+                        sendAckToNextion(162); // ACK HOMING
+                        nextion_profile = 2; // Multi-Step Profile 
+                    } else if (component_id == 28 && event == 0) { // STOP button Multi-Step Profile (Substitui 17 pelo ID do botão)
+                        ESP_LOGI("NEXTION", "Stop Multi-Step Profile Selected!");
+                        sendAckToNextion(164); // ACK MOTION END
+                        nextion_profile = 0; // Sinal de STOP
+                        parameters_recv = false;
+                    }
+                }                
             }
             // End Touch Event (0x65) -------------------------------------------------------------
             
@@ -246,12 +259,23 @@ void rxFromNextion(const uint8_t *data, int len)
                 uint16_t m2_freq_x2 = buffer[12] | (buffer[13] << 8);
                 uint16_t m2_freq_x3 = buffer[14] | (buffer[15] << 8);
                 uint16_t m2_freq_x4 = buffer[16] | (buffer[17] << 8);
-                uint16_t m2_disp_y = buffer[18] | (buffer[19] << 8);
-                uint16_t m2_disp_x = buffer[20] | (buffer[21] << 8);
-                uint16_t m2_time_s = buffer[22] | (buffer[23] << 8);
-                uint16_t recv_crc = buffer[24] | (buffer[25] << 8); 
+                uint16_t m2_time_y1 = buffer[18] | (buffer[19] << 8);
+                uint16_t m2_time_y2 = buffer[20] | (buffer[21] << 8);
+                uint16_t m2_time_y3 = buffer[22] | (buffer[23] << 8);
+                uint16_t m2_time_y4 = buffer[24] | (buffer[25] << 8);
+                uint16_t m2_time_x1 = buffer[26] | (buffer[27] << 8);
+                uint16_t m2_time_x2 = buffer[28] | (buffer[29] << 8);
+                uint16_t m2_time_x3 = buffer[30] | (buffer[31] << 8);
+                uint16_t m2_time_x4 = buffer[32] | (buffer[33] << 8);
+                uint16_t m2_disp_y = buffer[34] | (buffer[35] << 8);
+                uint16_t m2_disp_x = buffer[36] | (buffer[37] << 8);
+                uint16_t m2_time_s = buffer[38] | (buffer[39] << 8);
+                uint16_t recv_crc  = buffer[40] | (buffer[41] << 8); 
 
-                uint8_t payload[] = {buffer[2],buffer[3],buffer[4],buffer[5],buffer[6],buffer[7],buffer[8],buffer[9],buffer[10],buffer[11],buffer[12],buffer[13],buffer[14],buffer[15],buffer[16],buffer[17],buffer[18],buffer[19],buffer[20],buffer[21],buffer[22],buffer[23]};  // dados sem header, tipo e CRC    
+                uint8_t payload[38]; 
+                for(int j = 0; j < 38; j++) {
+                    payload[j] = buffer[2 + j];
+                }
                 uint16_t calc_crc = nextion_crc16_modbus(payload, sizeof(payload)); // calcula CRC dos dados recebidos
 
                 // Conversão para floats (escala x10 enviada pelo Nextion)
@@ -263,23 +287,32 @@ void rxFromNextion(const uint8_t *data, int len)
                 float f2_freq_x2 = m2_freq_x2 / 10.0f;
                 float f2_freq_x3 = m2_freq_x3 / 10.0f;
                 float f2_freq_x4 = m2_freq_x4 / 10.0f;
+                float f2_time_y1 = m2_time_y1 / 10.0f;
+                float f2_time_y2 = m2_time_y2 / 10.0f;
+                float f2_time_y3 = m2_time_y3 / 10.0f;
+                float f2_time_y4 = m2_time_y4 / 10.0f;
+                float f2_time_x1 = m2_time_x1 / 10.0f;
+                float f2_time_x2 = m2_time_x2 / 10.0f;
+                float f2_time_x3 = m2_time_x3 / 10.0f;
+                float f2_time_x4 = m2_time_x4 / 10.0f;
                 float f2_disp_y = m2_disp_y / 10.0f;
                 float f2_disp_x = m2_disp_x / 10.0f;
                 float f2_time_s = m2_time_s / 10.0f;
                     
                 if (recv_crc == calc_crc) {
-                    ESP_LOGI("NEXTION", "✅ CRC OK - Freq Y: [%.1f, %.1f, %.1f, %.1f]Hz, Freq X: [%.1f, %.1f, %.1f, %.1f]Hz, Disp Y: %.1fmm, Disp X: %.1fmm, Time: %.1fs",
-                            f2_freq_y1, f2_freq_y2, f2_freq_y3, f2_freq_y4,
-                            f2_freq_x1, f2_freq_x2, f2_freq_x3, f2_freq_x4,
-                            f2_disp_y, f2_disp_x, f2_time_s);
+                    ESP_LOGI("NEXTION", "✅ CRC OK - F_y[%.1f, %.1f, %.1f, %.1f]Hz F_x[%.1f, %.1f, %.1f, %.1f]Hz", f2_freq_y1, f2_freq_y2, f2_freq_y3, f2_freq_y4, f2_freq_x1, f2_freq_x2, f2_freq_x3, f2_freq_x4);
+                    ESP_LOGI("NEXTION", "           T_y[%.1f, %.1f, %.1f, %.1f]s  T_x[%.1f, %.1f, %.1f, %.1f]s", f2_time_y1, f2_time_y2, f2_time_y3, f2_time_y4, f2_time_x1, f2_time_x2, f2_time_x3, f2_time_x4);
+                    ESP_LOGI("NEXTION", "           D_y: %.1fmm, D_x: %.1fmm, TempTotal: %.1fs", f2_disp_y, f2_disp_x, f2_time_s);
                         
                     // Validação acumulada para manter o código legível e estruturado
                     bool params_ok = true;
 
-                    // 1. Valida Deslocamentos e Tempo
+                    // 1. Valida Deslocamentos e Tempos
                     params_ok &= displacement_parameter_validation(f2_disp_x);
                     params_ok &= displacement_parameter_validation(f2_disp_y);
                     params_ok &= time_parameter_validation(f2_time_s);
+                    params_ok &= time_parameter_validation(f2_time_x1) && time_parameter_validation(f2_time_x2) && time_parameter_validation(f2_time_x3) && time_parameter_validation(f2_time_x4);
+                    params_ok &= time_parameter_validation(f2_time_y1) && time_parameter_validation(f2_time_y2) && time_parameter_validation(f2_time_y3) && time_parameter_validation(f2_time_y4);
 
                     // 2. Valida Frequências do Motor X
                     params_ok &= frequency_parameter_validation(f2_freq_x1) && frequency_parameter_validation(f2_freq_x2) &&
@@ -307,6 +340,12 @@ void rxFromNextion(const uint8_t *data, int len)
                         nextion_multistep_freq_y[0] = f2_freq_y1; nextion_multistep_freq_y[1] = f2_freq_y2;
                         nextion_multistep_freq_y[2] = f2_freq_y3; nextion_multistep_freq_y[3] = f2_freq_y4;
                         
+                        nextion_multistep_time_x[0] = f2_time_x1; nextion_multistep_time_x[1] = f2_time_x2;
+                        nextion_multistep_time_x[2] = f2_time_x3; nextion_multistep_time_x[3] = f2_time_x4;
+                        
+                        nextion_multistep_time_y[0] = f2_time_y1; nextion_multistep_time_y[1] = f2_time_y2;
+                        nextion_multistep_time_y[2] = f2_time_y3; nextion_multistep_time_y[3] = f2_time_y4;
+
                         // 2. Reutilizar as variáveis globais de deslocamento e tempo
                         nextion_target_disp_x = f2_disp_x;
                         nextion_target_disp_y = f2_disp_y;
@@ -314,7 +353,6 @@ void rxFromNextion(const uint8_t *data, int len)
                         
                         // 3. Ativar a flag para permitir que o botão "Start" funcione
                         parameters_recv = true;
-                        // TODO: Guardar os f2_freq... em variáveis globais e ativar flag de permissão de Start
                     } else {
                         sendAckToNextion(166); // ACK INVALID PARAMS
                     }

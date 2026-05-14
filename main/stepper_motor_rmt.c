@@ -982,10 +982,43 @@ void stepper_rmt_task_1(void *arg)
                 case 2: {
                     // Multi-Step Frequency Profile (Non-Periodic Looping)
                     // Example: 4 stages, looping for 60 seconds total. 0.5s transition blend time.
-                    float freqs[] = {1.0f, 2.5f, 4.0f, 1.5f};
-                    float times[] = {5.0f, 10.0f, 5.0f, 8.0f};
+                    //float freqs[] = {1.0f, 2.5f, 4.0f, 1.5f};
+                    //float times[] = {5.0f, 10.0f, 5.0f, 8.0f};
                     // Note: This block uses { } to define local scope for the arrays inside the switch case.
-                    stepper_rmt_run_multistep_freq_profile(motor1, 16.0f, freqs, times, 4, 60.0f, 0.5f, &my_table);
+                    //stepper_rmt_run_multistep_freq_profile(motor1, 16.0f, freqs, times, 4, 60.0f, 0.5f, &my_table);
+
+                    motor1_ready = false;
+                    ESP_LOGI(TAG, "Motor 1: A executar Auto-Homing preparatorio...");
+                    stepper_rmt_homing(motor1, 22, 23);
+                    motor1_ready = true;
+
+                    if (nextion_target_disp_x > 0.0f && nextion_target_time_s > 0.0f) {
+                        // Barreira de Sincronização: aguarda que o Motor 2 também acabe o seu Homing
+                        while (!motor2_ready && nextion_profile == 2) {
+                            vTaskDelay(pdMS_TO_TICKS(10));
+                        }
+                        
+                        // Após ambos acabarem, arrancam em simultâneo
+                        if (nextion_profile == 2) {
+                            sendAckToNextion(163); // Envia ACK START MOTION apenas após o Homing acabar
+                            stepper_rmt_run_multistep_freq_profile(motor1, nextion_target_disp_x, nextion_multistep_freq_x, nextion_multistep_time_x, 4, nextion_target_time_s, 0.5f, &my_table);
+                        }
+                    } else {
+                        ESP_LOGI(TAG, "Motor 1 parado (Deslocamento nulo). A manter sincronia...");
+                        while (!motor2_ready && nextion_profile == 2) {
+                            vTaskDelay(pdMS_TO_TICKS(10));
+                        }
+                        if (nextion_profile == 2) {
+                            sendAckToNextion(163);
+                        }
+                        int64_t start_idle_us = esp_timer_get_time();
+                        int64_t duration_idle_us = (int64_t)(nextion_target_time_s * 1000000.0f);
+                        while ((esp_timer_get_time() - start_idle_us) < duration_idle_us) {
+                            if (nextion_profile == 0) break;
+                            vTaskDelay(pdMS_TO_TICKS(50));
+                        }
+                        gpio_set_level(motor1->gpio_en, !STEP_MOTOR_ENABLE_LEVEL);                        
+                    }
                     break;
                 }
                 case 3:
@@ -1143,9 +1176,38 @@ void stepper_rmt_task_2(void *arg)
                 case 2: {
                     // Multi-Step Frequency Profile (Non-Periodic Looping)
                     // Example: 4 stages, looping for 60 seconds total. 0.5s transition blend time.
-                    float multiStep_freqs[] = {1.0f, 2.5f, 4.0f, 1.5f};
-                    float multiStep_times[] = {5.0f, 10.0f, 5.0f, 8.0f};
-                    stepper_rmt_run_multistep_freq_profile(motor2, 33.0f, multiStep_freqs, multiStep_times, 4, 60.0f, 0.5f, &my_table);
+                    //float multiStep_freqs[] = {1.0f, 2.5f, 4.0f, 1.5f};
+                    //float multiStep_times[] = {5.0f, 10.0f, 5.0f, 8.0f};
+                    //stepper_rmt_run_multistep_freq_profile(motor2, 33.0f, multiStep_freqs, multiStep_times, 4, 60.0f, 0.5f, &my_table);
+
+                    motor2_ready = false;
+                    ESP_LOGI(TAG, "Motor 2: A executar Auto-Homing preparatorio...");
+                    stepper_rmt_homing(motor2, 27, 33);
+                    motor2_ready = true;
+
+                    if (nextion_target_disp_y > 0.0f && nextion_target_time_s > 0.0f) {
+                        // Barreira de Sincronização: aguarda que o Motor 1 também acabe o seu Homing
+                        while (!motor1_ready && nextion_profile == 2) {
+                            vTaskDelay(pdMS_TO_TICKS(10));
+                        }
+
+                        // Após ambos acabarem, arrancam em simultâneo
+                        if (nextion_profile == 2) {
+                            stepper_rmt_run_multistep_freq_profile(motor2, nextion_target_disp_y, nextion_multistep_freq_y, nextion_multistep_time_y, 4, nextion_target_time_s, 0.5f, &my_table);
+                        }
+                    } else {
+                        ESP_LOGI(TAG, "Motor 2 parado (Deslocamento nulo). A manter sincronia...");
+                        while (!motor1_ready && nextion_profile == 2) {
+                            vTaskDelay(pdMS_TO_TICKS(10));
+                        }
+                        int64_t start_idle_us = esp_timer_get_time();
+                        int64_t duration_idle_us = (int64_t)(nextion_target_time_s * 1000000.0f);
+                        while ((esp_timer_get_time() - start_idle_us) < duration_idle_us) {
+                            if (nextion_profile == 0) break;
+                            vTaskDelay(pdMS_TO_TICKS(50));
+                        }
+                        gpio_set_level(motor2->gpio_en, !STEP_MOTOR_ENABLE_LEVEL);
+                    }
                     break;
                 }
                 case 3:
