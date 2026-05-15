@@ -22,6 +22,18 @@ extern float nextion_multistep_freq_x[4];
 extern float nextion_multistep_freq_y[4];
 extern float nextion_multistep_time_x[4];
 extern float nextion_multistep_time_y[4];
+extern float nextion_trapz_start_freq_x;
+extern float nextion_trapz_cruise_freq_x;
+extern float nextion_trapz_end_freq_x;
+extern float nextion_trapz_accel_time_x;
+extern float nextion_trapz_cruise_time_x;
+extern float nextion_trapz_decel_time_x;
+extern float nextion_trapz_start_freq_y;
+extern float nextion_trapz_cruise_freq_y;
+extern float nextion_trapz_end_freq_y;
+extern float nextion_trapz_accel_time_y;
+extern float nextion_trapz_cruise_time_y;
+extern float nextion_trapz_decel_time_y;
 extern bool parameters_recv;
 
 // GPIO functions ---------------------------------------
@@ -63,7 +75,7 @@ stepper_rmt_context_t* stepper_rmt_init(uint8_t gpio_en, uint8_t gpio_dir, uint8
 esp_err_t stepper_rmt_run_steps(stepper_rmt_context_t *ctx, uint32_t uniform_speed_hz, uint32_t uniform_samples, uint32_t accel_samples, uint32_t decel_samples, bool direction);
 esp_err_t stepper_rmt_homing(stepper_rmt_context_t *ctx, uint8_t gpio_limit_right, uint8_t gpio_limit_left);
 esp_err_t stepper_rmt_run_realtime_sine_profile(stepper_rmt_context_t *ctx, float target_p2p_mm, float duration_s, adc_oneshot_unit_handle_t adc_handle, adc_channel_t adc_chan, float min_hz, float max_hz, const shake_table_config_t *table_config);
-esp_err_t stepper_rmt_run_trapezoidal_freq_profile(stepper_rmt_context_t *ctx, float target_p2p_mm, float start_freq_hz, float cruise_freq_hz, float accel_time_s, float cruise_time_s, float decel_time_s, const shake_table_config_t *table_config);
+esp_err_t stepper_rmt_run_trapezoidal_freq_profile(stepper_rmt_context_t *ctx, float target_p2p_mm, float start_freq_hz, float cruise_freq_hz, float end_freq_hz, float accel_time_s, float cruise_time_s, float decel_time_s, const shake_table_config_t *table_config);
 esp_err_t stepper_rmt_run_multistep_freq_profile(stepper_rmt_context_t *ctx, float target_p2p_mm, const float *freqs_hz, const float *times_s, uint8_t num_stages, float total_duration_s, float blend_time_s, const shake_table_config_t *table_config);
 esp_err_t stepper_rmt_run_sweep_profile(stepper_rmt_context_t *ctx, float target_p2p_mm, float start_freq_hz, float end_freq_hz, float duration_s, bool is_bidirectional, const shake_table_config_t *table_config);
 void stepper_rmt_task_1(void *arg);

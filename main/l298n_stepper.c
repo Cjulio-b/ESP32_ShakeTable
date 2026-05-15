@@ -103,6 +103,8 @@ void l298n_move_trapezoidal(uint32_t total_steps,
         float t = (float)i / accel_steps; // t goes from 0 to 1 (multiplication factor)
         float freq = start_hz + t * (cruise_hz - start_hz); // freq increases from start_hz to cruise_hz
 
+        if (freq < 0.1f) freq = 0.1f; // Prevenir divisão por 0
+
         float step_us_f = 1e6f / freq; // Time per step in microseconds
         if (step_us_f < g_min_step_us) step_us_f = g_min_step_us; // enforce minimum step time
 
@@ -128,6 +130,8 @@ void l298n_move_trapezoidal(uint32_t total_steps,
         // Linear interpolation of frequency
         float t = (float)i / decel_steps; // t goes from 0 to 1 (multiplication factor)
         float freq = cruise_hz + t * (end_hz - cruise_hz); // freq decreases from cruise_hz to end_hz
+
+        if (freq < 0.1f) freq = 0.1f; // Prevenir divisão por 0
 
         float step_us_f = 1e6f / freq; // Time per step in microseconds
         if (step_us_f < g_min_step_us) step_us_f = g_min_step_us; // enforce minimum step time

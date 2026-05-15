@@ -457,7 +457,7 @@ esp_err_t stepper_rmt_run_realtime_sine_profile(stepper_rmt_context_t *ctx, floa
     return ESP_OK;
 }
 
-esp_err_t stepper_rmt_run_trapezoidal_freq_profile(stepper_rmt_context_t *ctx, float target_p2p_mm, float start_freq_hz, float cruise_freq_hz, float accel_time_s, float cruise_time_s, float decel_time_s, const shake_table_config_t *table_config)
+esp_err_t stepper_rmt_run_trapezoidal_freq_profile(stepper_rmt_context_t *ctx, float target_p2p_mm, float start_freq_hz, float cruise_freq_hz, float end_freq_hz, float accel_time_s, float cruise_time_s, float decel_time_s, const shake_table_config_t *table_config)
 {
     if (!ctx || !table_config) return ESP_ERR_INVALID_ARG;
 
@@ -465,8 +465,8 @@ esp_err_t stepper_rmt_run_trapezoidal_freq_profile(stepper_rmt_context_t *ctx, f
     if (target_p2p_mm > max_p2p) target_p2p_mm = max_p2p;
 
     float total_time_s = accel_time_s + cruise_time_s + decel_time_s;
-    ESP_LOGI(TAG, "Trapezoidal Freq Profile: P2P=%.2fmm, Freq=%.2f->%.2fHz, Time=%.2fs (A=%.1f, C=%.1f, D=%.1f)",
-             target_p2p_mm, start_freq_hz, cruise_freq_hz, total_time_s, accel_time_s, cruise_time_s, decel_time_s);
+    ESP_LOGI(TAG, "Trapezoidal Freq Profile: P2P=%.2fmm, Freq=%.2f->%.2f->%.2fHz, Time=%.2fs (A=%.1f, C=%.1f, D=%.1f)",
+             target_p2p_mm, start_freq_hz, cruise_freq_hz, end_freq_hz, total_time_s, accel_time_s, cruise_time_s, decel_time_s);
 
     gpio_set_level(ctx->gpio_en, STEP_MOTOR_ENABLE_LEVEL);
     vTaskDelay(pdMS_TO_TICKS(50));
@@ -484,13 +484,15 @@ esp_err_t stepper_rmt_run_trapezoidal_freq_profile(stepper_rmt_context_t *ctx, f
             float t = (float)elapsed_us / 1000000.0f;
             float freq_hz = start_freq_hz;
             
-            if (t < accel_time_s) {
+            if (accel_time_s > 0.001f && t < accel_time_s) {
                 freq_hz = start_freq_hz + (cruise_freq_hz - start_freq_hz) * (t / accel_time_s);
             } else if (t < accel_time_s + cruise_time_s) {
                 freq_hz = cruise_freq_hz;
-            } else {
+            } else if (decel_time_s > 0.001f) {
                 float decel_t = t - accel_time_s - cruise_time_s;
-                freq_hz = cruise_freq_hz - (cruise_freq_hz - start_freq_hz) * (decel_t / decel_time_s);
+                freq_hz = cruise_freq_hz - (cruise_freq_hz - end_freq_hz) * (decel_t / decel_time_s);
+            } else {
+                freq_hz = end_freq_hz;
             }
             
             if (freq_hz < 0.1f) freq_hz = 0.1f; // Prevenir divisão por 0 e limites RMT
@@ -519,13 +521,15 @@ esp_err_t stepper_rmt_run_trapezoidal_freq_profile(stepper_rmt_context_t *ctx, f
             float t = (float)elapsed_us / 1000000.0f;
             float freq_hz = start_freq_hz;
             
-            if (t < accel_time_s) {
+            if (accel_time_s > 0.001f && t < accel_time_s) {
                 freq_hz = start_freq_hz + (cruise_freq_hz - start_freq_hz) * (t / accel_time_s);
             } else if (t < accel_time_s + cruise_time_s) {
                 freq_hz = cruise_freq_hz;
-            } else if (t < total_time_s) {
+            } else if (decel_time_s > 0.001f && t < total_time_s) {
                 float decel_t = t - accel_time_s - cruise_time_s;
-                freq_hz = cruise_freq_hz - (cruise_freq_hz - start_freq_hz) * (decel_t / decel_time_s);
+                freq_hz = cruise_freq_hz - (cruise_freq_hz - end_freq_hz) * (decel_t / decel_time_s);
+            } else {
+                freq_hz = end_freq_hz;
             }
             if (freq_hz < 0.1f) freq_hz = 0.1f;
 
@@ -1024,7 +1028,42 @@ void stepper_rmt_task_1(void *arg)
                 case 3:
                     // Trapezoidal Freq Profile
                     // Exemplo: 16mm P2P, de 0.5Hz até 3.0Hz. (3s para acelerar, 5s constante, 3s para travar)
-                    stepper_rmt_run_trapezoidal_freq_profile(motor1, 16.0f, 0.5f, 3.0f, 3.0f, 5.0f, 3.0f, &my_table);
+                    //stepper_rmt_run_trapezoidal_freq_profile(motor1, 16.0f, 0.5f, 3.0f, 0.5f, 3.0f, 5.0f, 3.0f, &my_table);                    
+                    
+                    motor1_ready = false;
+                    ESP_LOGI(TAG, "Motor 1: A executar Auto-Homing preparatorio...");
+                    stepper_rmt_homing(motor1, 22, 23);
+                    motor1_ready = true;
+
+                    if (nextion_target_disp_x > 0.0f) {
+                        // Barreira de Sincronização: aguarda que o Motor 2 também acabe o seu Homing
+                        while (!motor2_ready && nextion_profile == 3) {
+                            vTaskDelay(pdMS_TO_TICKS(10));
+                        }
+                        
+                        // Após ambos acabarem, arrancam em simultâneo
+                        if (nextion_profile == 3) {
+                            sendAckToNextion(163); // Envia ACK START MOTION
+                            stepper_rmt_run_trapezoidal_freq_profile(motor1, nextion_target_disp_x, nextion_trapz_start_freq_x, nextion_trapz_cruise_freq_x, nextion_trapz_end_freq_x, nextion_trapz_accel_time_x, nextion_trapz_cruise_time_x, nextion_trapz_decel_time_x, &my_table);
+                        }
+                    } else {
+                        ESP_LOGI(TAG, "Motor 1 parado (Deslocamento nulo). A manter sincronia...");
+                        while (!motor2_ready && nextion_profile == 3) {
+                            vTaskDelay(pdMS_TO_TICKS(10));
+                        }
+                        if (nextion_profile == 3) sendAckToNextion(163);
+
+                        int64_t start_idle_us = esp_timer_get_time();
+                        float total_time = nextion_trapz_accel_time_y + nextion_trapz_cruise_time_y + nextion_trapz_decel_time_y;
+                        if (total_time <= 0.0f) total_time = nextion_trapz_accel_time_x + nextion_trapz_cruise_time_x + nextion_trapz_decel_time_x;
+                        int64_t duration_idle_us = (int64_t)(total_time * 1000000.0f);
+                        
+                        while ((esp_timer_get_time() - start_idle_us) < duration_idle_us) {
+                            if (nextion_profile == 0) break;
+                            vTaskDelay(pdMS_TO_TICKS(50));
+                        }
+                        gpio_set_level(motor1->gpio_en, !STEP_MOTOR_ENABLE_LEVEL);                        
+                    }
                     break;
                 case 4:
                     // Real-Time Sine Profile (Analog control with potenciometer B10k)
@@ -1212,8 +1251,41 @@ void stepper_rmt_task_2(void *arg)
                 }
                 case 3:
                     // Trapezoidal Freq Profile
-                    // Exemplo: 33mm P2P, de 0.5Hz até 3.0Hz. (3s para acelerar, 5s constante, 3s para travar)
-                    stepper_rmt_run_trapezoidal_freq_profile(motor2, 33.0f, 0.5f, 3.0f, 3.0f, 5.0f, 3.0f, &my_table);
+                    // Exemplo: 33mm P2P, de 0.5Hz até 3.0Hz, final a 0.5Hz. (3s para acelerar, 5s constante, 3s para travar)
+                    //stepper_rmt_run_trapezoidal_freq_profile(motor2, 33.0f, 0.5f, 3.0f, 0.5f, 3.0f, 5.0f, 3.0f, &my_table)                    
+                    
+                    motor2_ready = false;
+                    ESP_LOGI(TAG, "Motor 2: A executar Auto-Homing preparatorio...");
+                    stepper_rmt_homing(motor2, 27, 33);
+                    motor2_ready = true;
+
+                    if (nextion_target_disp_y > 0.0f) {
+                        // Barreira de Sincronização: aguarda que o Motor 1 também acabe o seu Homing
+                        while (!motor1_ready && nextion_profile == 3) {
+                            vTaskDelay(pdMS_TO_TICKS(10));
+                        }
+
+                        // Após ambos acabarem, arrancam em simultâneo
+                        if (nextion_profile == 3) {
+                            stepper_rmt_run_trapezoidal_freq_profile(motor2, nextion_target_disp_y, nextion_trapz_start_freq_y, nextion_trapz_cruise_freq_y, nextion_trapz_end_freq_y, nextion_trapz_accel_time_y, nextion_trapz_cruise_time_y, nextion_trapz_decel_time_y, &my_table);
+                        }
+                    } else {
+                        ESP_LOGI(TAG, "Motor 2 parado (Deslocamento nulo). A manter sincronia...");
+                        while (!motor1_ready && nextion_profile == 3) {
+                            vTaskDelay(pdMS_TO_TICKS(10));
+                        }
+
+                        int64_t start_idle_us = esp_timer_get_time();
+                        float total_time = nextion_trapz_accel_time_x + nextion_trapz_cruise_time_x + nextion_trapz_decel_time_x;
+                        if (total_time <= 0.0f) total_time = nextion_trapz_accel_time_y + nextion_trapz_cruise_time_y + nextion_trapz_decel_time_y;
+                        int64_t duration_idle_us = (int64_t)(total_time * 1000000.0f);
+                        
+                        while ((esp_timer_get_time() - start_idle_us) < duration_idle_us) {
+                            if (nextion_profile == 0) break;
+                            vTaskDelay(pdMS_TO_TICKS(50));
+                        }
+                        gpio_set_level(motor2->gpio_en, !STEP_MOTOR_ENABLE_LEVEL);
+                    }
                     break;
                 case 4:
                     // Real-Time Sine Profile (Analog control with potenciometer B10k)
