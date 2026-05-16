@@ -233,6 +233,9 @@ esp_err_t stepper_rmt_run_sine_profile(stepper_rmt_context_t *ctx, float target_
 {
     if (!ctx || !table_config) return ESP_ERR_INVALID_ARG;
 
+    // Prevenir divisões por zero ou crash no driver RMT
+    if (freq_hz < 0.1f) freq_hz = 0.1f;
+
     float max_p2p = table_config->axis_x.peak_to_peak_disp_mm; // Typical max displacement (e.g., 33.0mm)
     
     // Safety check: clamp requested displacement to the physical table maximum
@@ -377,6 +380,8 @@ esp_err_t stepper_rmt_run_realtime_sine_profile(stepper_rmt_context_t *ctx, floa
             
             // Mapeia ADC (0-4095) para a gama de Frequências configurada
             float freq_hz = min_hz + ((float)adc_val / 4095.0f) * (max_hz - min_hz);
+            
+            if (freq_hz < 0.1f) freq_hz = 0.1f; // Evita divisões por zero e previne crash no RMT
             uint32_t speed_hz = (uint32_t)(table_config->stepper_x.microsteps_per_rev * freq_hz);
             
             // Transmite um pequeno bloco (aprox 100ms) à velocidade atual antes de ler novamente
@@ -411,6 +416,8 @@ esp_err_t stepper_rmt_run_realtime_sine_profile(stepper_rmt_context_t *ctx, floa
             int adc_val = 0;
             adc_oneshot_read(adc_handle, adc_chan, &adc_val);
             float freq_hz = min_hz + ((float)adc_val / 4095.0f) * (max_hz - min_hz);
+            
+            if (freq_hz < 0.1f) freq_hz = 0.1f; // Evita divisões por zero e previne crash no RMT
 
             float T = 1.0f / freq_hz;
             float dt = (T / 4.0f) / Q_SEGMENTS;
@@ -1068,22 +1075,68 @@ void stepper_rmt_task_1(void *arg)
                 case 4:
                     // Real-Time Sine Profile (Analog control with potenciometer B10k)
                     //Amplitude 16.0mm, Duration: 10 sec, Dynamic frequency manage by ADC between 0.5Hz to 5.0Hz
-                    stepper_rmt_run_realtime_sine_profile(motor1, 16.0f, 10.0f, s_adc1_handle, ADC_CHANNEL_6, 0.5f, 5.0f, &my_table);
-                    break;
-                case 5:
-                    // Sweep / Chirp Profile (IEC/ISO Standard Logarithmic Sweep)
-                    // Example: 33mm P2P, from 0.5Hz to 10.0Hz, 30 seconds duration, Bidirectional (Ping-Pong) = true
-                    // stepper_rmt_run_sweep_profile(motor1, 16.0f, 0.5f, 5.0f, 30.0f, true, &my_table);
-                    if (nextion_target_disp_x > 0.0f && nextion_target_freq_x > 0.0f && nextion_target_time_s > 0.0f) {
-                        // Assumimos frequência inicial de 0.5Hz e final como sendo a escolhida no ecrã
-                        stepper_rmt_run_sweep_profile(motor1, nextion_target_disp_x, 0.5f, nextion_target_freq_x, nextion_target_time_s, true, &my_table);
+                    //stepper_rmt_run_realtime_sine_profile(motor1, 16.0f, 10.0f, s_adc1_handle, ADC_CHANNEL_6, 0.5f, 5.0f, &my_table);
+                    
+                    motor1_ready = false;
+                    ESP_LOGI(TAG, "Motor 1: A executar Auto-Homing preparatorio...");
+                    stepper_rmt_homing(motor1, 22, 23);
+                    motor1_ready = true;
+
+                    if (nextion_target_disp_x > 0.0f && nextion_target_time_s > 0.0f) {
+                        while (!motor2_ready && nextion_profile == 4) {
+                            vTaskDelay(pdMS_TO_TICKS(10));
+                        }
+                        if (nextion_profile == 4) {
+                            sendAckToNextion(163);
+                            stepper_rmt_run_realtime_sine_profile(motor1, nextion_target_disp_x, nextion_target_time_s, s_adc1_handle, ADC_CHANNEL_6, nextion_rt_min_freq_x, nextion_rt_max_freq_x, &my_table);
+                        }
                     } else {
-                        ESP_LOGI(TAG, "Motor 1 parado no Sweep. A manter sincronia...");
+                        ESP_LOGI(TAG, "Motor 1 parado (Deslocamento nulo). A manter sincronia...");
+                        while (!motor2_ready && nextion_profile == 4) {
+                            vTaskDelay(pdMS_TO_TICKS(10));
+                        }
+                        if (nextion_profile == 4) sendAckToNextion(163);
                         int64_t start_idle_us = esp_timer_get_time();
-                        while ((esp_timer_get_time() - start_idle_us) < (int64_t)(nextion_target_time_s * 1000000.0f)) {
+                        int64_t duration_idle_us = (int64_t)(nextion_target_time_s * 1000000.0f);
+                        while ((esp_timer_get_time() - start_idle_us) < duration_idle_us) {
                             if (nextion_profile == 0) break;
                             vTaskDelay(pdMS_TO_TICKS(50));
                         }
+                        gpio_set_level(motor1->gpio_en, !STEP_MOTOR_ENABLE_LEVEL);                        
+                    }
+                    break;
+                case 5:
+                    // Sweep / Chirp Profile (IEC/ISO Standard Logarithmic Sweep)
+                    motor1_ready = false;
+                    ESP_LOGI(TAG, "Motor 1: A executar Auto-Homing preparatorio...");
+                    stepper_rmt_homing(motor1, 22, 23);
+                    motor1_ready = true;
+
+                    if (nextion_target_disp_x > 0.0f && nextion_target_time_s > 0.0f) {
+                        while (!motor2_ready && nextion_profile == 5) {
+                            vTaskDelay(pdMS_TO_TICKS(10));
+                        }
+                        if (nextion_profile == 5) {
+                            sendAckToNextion(163);
+                            stepper_rmt_run_sweep_profile(motor1, nextion_target_disp_x, nextion_sweep_min_freq_x, nextion_sweep_max_freq_x, nextion_target_time_s, nextion_sweep_isBid_x, &my_table);
+                        }
+                    } else {
+                        ESP_LOGI(TAG, "Motor 1 parado (Deslocamento nulo). A manter sincronia...");
+                        while (!motor2_ready && nextion_profile == 5) {
+                            vTaskDelay(pdMS_TO_TICKS(10));
+                        }
+                        if (nextion_profile == 5) sendAckToNextion(163);
+                        int64_t start_idle_us = esp_timer_get_time();
+                        
+                        float max_duration = nextion_target_time_s * (nextion_sweep_isBid_y ? 2.0f : 1.0f);
+                        if (nextion_target_disp_x > 0.0f) max_duration = nextion_target_time_s * (nextion_sweep_isBid_x ? 2.0f : 1.0f);
+                        int64_t duration_idle_us = (int64_t)(max_duration * 1000000.0f);
+
+                        while ((esp_timer_get_time() - start_idle_us) < duration_idle_us) {
+                            if (nextion_profile == 0) break;
+                            vTaskDelay(pdMS_TO_TICKS(50));
+                        }
+                        gpio_set_level(motor1->gpio_en, !STEP_MOTOR_ENABLE_LEVEL);
                     }
                     break;
                 case 6:
@@ -1290,22 +1343,62 @@ void stepper_rmt_task_2(void *arg)
                 case 4:
                     // Real-Time Sine Profile (Analog control with potenciometer B10k)
                     //  Example: Amplitude 32.0mm, Duration: 10 Segundos, Dynamic frequency manage by ADC between 0.5Hz to 5.0Hz        
-                    stepper_rmt_run_realtime_sine_profile(motor2, 33.0f, 10.0f, s_adc1_handle, ADC_CHANNEL_3, 0.5f, 5.0f, &my_table);        
-                    break;
-                case 5:
-                    // Sweep / Chirp Profile (IEC/ISO Standard Logarithmic Sweep)
-                    // Example: 33mm P2P, from 0.5Hz to 10.0Hz, 30 seconds duration, Bidirectional (Ping-Pong) = true
-                    //stepper_rmt_run_sweep_profile(motor2, 33.0f, 0.5f, 5.0f, 30.0f, true, &my_table);
-                    if (nextion_target_disp_y > 0.0f && nextion_target_freq_y > 0.0f && nextion_target_time_s > 0.0f) {
-                        // Assumimos frequência inicial de 0.5Hz e final como sendo a escolhida no ecrã
-                        stepper_rmt_run_sweep_profile(motor2, nextion_target_disp_y, 0.5f, nextion_target_freq_y, nextion_target_time_s, true, &my_table);
+                    //stepper_rmt_run_realtime_sine_profile(motor2, 33.0f, 10.0f, s_adc1_handle, ADC_CHANNEL_3, 0.5f, 5.0f, &my_table);  
+                    
+                    stepper_rmt_homing(motor2, 27, 33);
+                    motor2_ready = true;
+
+                    if (nextion_target_disp_y > 0.0f && nextion_target_time_s > 0.0f) {
+                        while (!motor1_ready && nextion_profile == 4) {
+                            vTaskDelay(pdMS_TO_TICKS(10));
+                        }
+                        if (nextion_profile == 4) {
+                            stepper_rmt_run_realtime_sine_profile(motor2, nextion_target_disp_y, nextion_target_time_s, s_adc1_handle, ADC_CHANNEL_3, nextion_rt_min_freq_y, nextion_rt_max_freq_y, &my_table);
+                        }
                     } else {
-                        ESP_LOGI(TAG, "Motor 2 parado no Sweep. A manter sincronia...");
+                        ESP_LOGI(TAG, "Motor 2 parado (Deslocamento nulo). A manter sincronia...");
+                        while (!motor1_ready && nextion_profile == 4) {
+                            vTaskDelay(pdMS_TO_TICKS(10));
+                        }
                         int64_t start_idle_us = esp_timer_get_time();
-                        while ((esp_timer_get_time() - start_idle_us) < (int64_t)(nextion_target_time_s * 1000000.0f)) {
+                        int64_t duration_idle_us = (int64_t)(nextion_target_time_s * 1000000.0f);
+                        while ((esp_timer_get_time() - start_idle_us) < duration_idle_us) {
                             if (nextion_profile == 0) break;
                             vTaskDelay(pdMS_TO_TICKS(50));
                         }
+                        gpio_set_level(motor2->gpio_en, !STEP_MOTOR_ENABLE_LEVEL);
+                    }
+                    break;
+                case 5:
+                    // Sweep / Chirp Profile (IEC/ISO Standard Logarithmic Sweep)
+                    motor2_ready = false;
+                    ESP_LOGI(TAG, "Motor 2: A executar Auto-Homing preparatorio...");
+                    stepper_rmt_homing(motor2, 27, 33);
+                    motor2_ready = true;
+
+                    if (nextion_target_disp_y > 0.0f && nextion_target_time_s > 0.0f) {
+                        while (!motor1_ready && nextion_profile == 5) {
+                            vTaskDelay(pdMS_TO_TICKS(10));
+                        }
+                        if (nextion_profile == 5) {
+                            stepper_rmt_run_sweep_profile(motor2, nextion_target_disp_y, nextion_sweep_min_freq_y, nextion_sweep_max_freq_y, nextion_target_time_s, nextion_sweep_isBid_y, &my_table);
+                        }
+                    } else {
+                        ESP_LOGI(TAG, "Motor 2 parado (Deslocamento nulo). A manter sincronia...");
+                        while (!motor1_ready && nextion_profile == 5) {
+                            vTaskDelay(pdMS_TO_TICKS(10));
+                        }
+                        int64_t start_idle_us = esp_timer_get_time();
+
+                        float max_duration = nextion_target_time_s * (nextion_sweep_isBid_y ? 2.0f : 1.0f);
+                        if (nextion_target_disp_x > 0.0f) max_duration = nextion_target_time_s * (nextion_sweep_isBid_x ? 2.0f : 1.0f);
+                        int64_t duration_idle_us = (int64_t)(max_duration * 1000000.0f);
+
+                        while ((esp_timer_get_time() - start_idle_us) < duration_idle_us) {
+                            if (nextion_profile == 0) break;
+                            vTaskDelay(pdMS_TO_TICKS(50));
+                        }
+                        gpio_set_level(motor2->gpio_en, !STEP_MOTOR_ENABLE_LEVEL);
                     }
                     break;
                 case 6:

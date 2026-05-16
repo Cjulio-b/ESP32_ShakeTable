@@ -29,6 +29,16 @@ float nextion_trapz_end_freq_y = 0.0f;
 float nextion_trapz_accel_time_y = 0.0f;
 float nextion_trapz_cruise_time_y = 0.0f;
 float nextion_trapz_decel_time_y = 0.0f;
+float nextion_rt_min_freq_x = 0.0f;
+float nextion_rt_max_freq_x = 0.0f;
+float nextion_rt_min_freq_y = 0.0f;
+float nextion_rt_max_freq_y = 0.0f;
+float nextion_sweep_min_freq_x = 0.0f;
+float nextion_sweep_max_freq_x = 0.0f;
+float nextion_sweep_min_freq_y = 0.0f;
+float nextion_sweep_max_freq_y = 0.0f;
+bool nextion_sweep_isBid_x = false;
+bool nextion_sweep_isBid_y = false;
 bool parameters_recv = false;
 
 // CRC-16 Modbus (polinómio 0xA001, inicial 0xFFFF)
@@ -226,14 +236,40 @@ void rxFromNextion(const uint8_t *data, int len)
                         nextion_profile = 0; // Sinal de STOP
                         parameters_recv = false;
                     }
-                }                
+                } else if (page == 5) {
+                    if (component_id == 3 && event == 0 && parameters_recv) { // <-- ID BOTÃO START
+                        ESP_LOGI("NEXTION", "Start Real-Time Sine Profile Selected!");
+                        sendAckToNextion(162); // ACK HOMING
+                        nextion_profile = 4; // Real-Time Sine Profile 
+                     } else if (component_id == 4 && event == 0) { // <-- ID BOTÃO STOP
+                        ESP_LOGI("NEXTION", "Stop Real-Time Sine Profile Selected!");
+                        sendAckToNextion(164); // ACK MOTION END
+                        nextion_profile = 0; // Sinal de STOP
+                        parameters_recv = false;
+                     }
+                }
+                else if (page == 6) {
+                    if (component_id == 17 && event == 0 && parameters_recv) { // <-- ID BOTÃO START
+                        ESP_LOGI("NEXTION", "Start Sweep / Chirp Profile Selected!");
+                        sendAckToNextion(162); // ACK HOMING
+                        nextion_profile = 5; // Sweep Profile 
+                     } else if (component_id == 18 && event == 0) { // <-- ID BOTÃO STOP
+                        ESP_LOGI("NEXTION", "Stop Sweep / Chirp Profile Selected!");
+                        sendAckToNextion(164); // ACK MOTION END
+                        nextion_profile = 0; // Sinal de STOP
+                        parameters_recv = false;
+                     }
+                }
+
             }
             // End Touch Event (0x65) -------------------------------------------------------------
             
             // Shaking Table Profiles Data Packet (0x55) -------------------------------------------------------------
-            // Example: 55 01 F4 01 FA 00 32 00 23 00 63 76 FF FF FF
-            // 55 - Custom Send Event ; 01 - Type of Data (Ex: Sine Parameters) ; F4 01 -  freq motor axis y (5.00Hz) ; FA 00 - frequency motor axis x (2.50Hz) ; 32 00 - displacement y (0.50mm) ; 23 00 - displacement x (0.35mm) ; 58 02 - time (60s) ; 63 2B - CRC16 ; FF FF FF - Terminator
             else if (buffer[0] == 0x55 && buffer[1] == 0x01) {
+                // Sine Wave Profile
+                // Example: 55 01 F4 01 FA 00 32 00 23 00 63 76 FF FF FF
+                // 55 - Custom Send Event ; 01 - Type of Data (Ex: Sine Parameters) ; F4 01 -  freq motor axis y (5.00Hz) ; FA 00 - frequency motor axis x (2.50Hz) ; 32 00 - displacement y (0.50mm) ; 23 00 - displacement x (0.35mm) ; 58 02 - time (60s) ; 63 2B - CRC16 ; FF FF FF - Terminator
+
                 uint16_t freq_y = buffer[2] | (buffer[3] << 8);
                 uint16_t freq_x = buffer[4] | (buffer[5] << 8);
                 uint16_t disp_y = buffer[6] | (buffer[7] << 8);
@@ -275,9 +311,11 @@ void rxFromNextion(const uint8_t *data, int len)
                     ESP_LOGW("NEXTION", "❌ CRC inválido (esperado 0x%04X, recebido 0x%04X)", calc_crc, recv_crc);
                     sendAckToNextion(161); // ACK ERROR;
                 }
-            // Example: 55 02 1E 00 0A 00 32 00 14 00 14 00 32 00 0A 00 1E 00 64 00 A0 00 00 00 E6 8E FF FF FF 
-            // 55 - Custom Send Event ; 02 - Type of Data (Multi-Step Parameters) ; 1E 00 - freq_y1 (3.0Hz) ; 0A 00 - freq_y2 (1.0Hz) ; 32 00 - freq_y3 (5.0Hz) ; 14 00 - freq_y4 (2.0Hz) ; 14 00 - freq_x1 (2.0Hz) ; 32 00 - freq_x2 (5.0Hz) ; 0A 00 - freq_x3 (1.0Hz) ; 1E 00 - freq_x4 (3.0Hz) ; 64 00 - disp_y (10.0mm) ; A0 00 - disp_x (16.0mm) ; 00 00 - time (0.0s) ; E6 8E - CRC16 ; FF FF FF - Terminator
             } else if (buffer[0] == 0x55 && buffer[1] == 0x02) {
+                // Multi-step Profile
+                // Example: 55 02 1E 00 0A 00 32 00 14 00 14 00 32 00 0A 00 1E 00 64 00 A0 00 00 00 E6 8E FF FF FF 
+                // 55 - Custom Send Event ; 02 - Type of Data (Multi-Step Parameters) ; 1E 00 - freq_y1 (3.0Hz) ; 0A 00 - freq_y2 (1.0Hz) ; 32 00 - freq_y3 (5.0Hz) ; 14 00 - freq_y4 (2.0Hz) ; 14 00 - freq_x1 (2.0Hz) ; 32 00 - freq_x2 (5.0Hz) ; 0A 00 - freq_x3 (1.0Hz) ; 1E 00 - freq_x4 (3.0Hz) ; 64 00 - disp_y (10.0mm) ; A0 00 - disp_x (16.0mm) ; 00 00 - time (0.0s) ; E6 8E - CRC16 ; FF FF FF - Terminator
+
                 uint16_t m2_freq_y1 = buffer[2] | (buffer[3] << 8);
                 uint16_t m2_freq_y2 = buffer[4] | (buffer[5] << 8);
                 uint16_t m2_freq_y3 = buffer[6] | (buffer[7] << 8);
@@ -392,7 +430,10 @@ void rxFromNextion(const uint8_t *data, int len)
                     sendAckToNextion(161); // ACK ERROR;
                 }
             } else if (buffer[0] == 0x55 && buffer[1] == 0x03) {
-                // Perfil Trapezoidal
+                //  Perfil Trapezoidal
+                //  Example: 55 03 05 00 1E 00 0A 00 05 00 19 00 32 00 0A 00 FA 00 14 00 00 00 2C 01 28 00 96 00 E6 00 AD C9 FF FF FF
+                //  55 - Custom Send Event ; 03 - Type of Data (Trapezoidal Parameters) ; 05 00 - startFreq_y (0.5Hz) ; 1E 00 - cruiseFreq_y (3.0Hz) ; 0A 00 - endFreq_y (1.0Hz) ; 05 00 - startFreq_x (0.5Hz) ; 19 00 - cruiseFreq_x (2.5Hz) ; 32 00 - endFreq_x (5.0Hz) ; 0A 00 - acelTime_y (1.0s) ; FA 00 - cruiseTime_y (25.0s) ; 14 00 - decelTime_y (2.0s) ; 00 00 - acelTime_x (0.0s) ; 2C 01 - cruiseTime_x (30.0s) ; 28 00 - decelTime_x (4.0s) ; 96 00 - disp_y (15.0mm) ; E6 00 - disp_x (23.0mm) ; AD C9 - CRC16 ; FF FF FF - Terminator
+
                 uint16_t m3_startFreq_y  = buffer[2] | (buffer[3] << 8);
                 uint16_t m3_cruiseFreq_y = buffer[4] | (buffer[5] << 8);
                 uint16_t m3_endFreq_y    = buffer[6] | (buffer[7] << 8);
@@ -476,6 +517,157 @@ void rxFromNextion(const uint8_t *data, int len)
                 } else {
                     ESP_LOGW("NEXTION", "❌ CRC inválido (esperado 0x%04X, recebido 0x%04X)", calc_crc, recv_crc);
                     sendAckToNextion(161); // ACK ERROR;
+                } 
+            } else if (buffer[0] == 0x55 && buffer[1] == 0x04) {
+                //  Real-time sine wave profile 
+                //  Example: 55 01 05 00 32 00 05 00 32 00 96 00 E6 00 2C 01 72 20 FF FF FF
+                //  55 - Custom Send Event ; 04 - Type of Data (Real-Time Sine Parameters) ; 05 00 - minFreq_y (0.5Hz) ; 32 00 - maxFreq_y (5.0Hz) ; 05 00 - minFreq_x (0.5Hz) ; 32 00 - maxFreq_x (5.0Hz) ; 96 00 - disp_y (15.0mm) ; E6 00 - disp_x (23.0mm) ; 2C 01 - duration (30.0s) ; E6 20 - CRC16 ; FF FF FF - Terminator
+
+                uint16_t m4_minFreq_y = buffer[2] | (buffer[3] << 8);
+                uint16_t m4_maxFreq_y = buffer[4] | (buffer[5] << 8);
+                uint16_t m4_minFreq_x = buffer[6] | (buffer[7] << 8);
+                uint16_t m4_maxFreq_x = buffer[8] | (buffer[9] << 8);
+                uint16_t m4_disp_y    = buffer[10] | (buffer[11] << 8);
+                uint16_t m4_disp_x    = buffer[12] | (buffer[13] << 8);
+                uint16_t m4_duration  = buffer[14] | (buffer[15] << 8);
+                uint16_t recv_crc     = buffer[16] | (buffer[17] << 8);
+
+                uint8_t payload[14];
+                for(int j = 0; j < 14; j++) {
+                    payload[j] = buffer[2 + j];
+                }
+                uint16_t calc_crc = nextion_crc16_modbus(payload, sizeof(payload));
+
+                // Conversão para floats (escala x10)
+                float f4_minFreq_y = m4_minFreq_y / 10.0f;
+                float f4_maxFreq_y = m4_maxFreq_y / 10.0f;
+                float f4_minFreq_x = m4_minFreq_x / 10.0f;
+                float f4_maxFreq_x = m4_maxFreq_x / 10.0f;
+                float f4_disp_y    = m4_disp_y / 10.0f;
+                float f4_disp_x    = m4_disp_x / 10.0f;
+                float f4_duration  = m4_duration / 10.0f;
+                    
+                if (recv_crc == calc_crc) {
+                    ESP_LOGI("NEXTION", "✅ CRC OK - Real-Time Sine Profile Recebido:");
+                    ESP_LOGI("NEXTION", "           F_y[%.1f - %.1f]Hz  F_x[%.1f - %.1f]Hz", f4_minFreq_y, f4_maxFreq_y, f4_minFreq_x, f4_maxFreq_x);
+                    ESP_LOGI("NEXTION", "           D_y: %.1fmm, D_x: %.1fmm, Dur: %.1fs", f4_disp_y, f4_disp_x, f4_duration);
+
+                    bool params_ok = true;
+                    params_ok &= displacement_parameter_validation(f4_disp_x);
+                    params_ok &= displacement_parameter_validation(f4_disp_y);
+                    params_ok &= time_parameter_validation(f4_duration);
+
+                    if (f4_disp_x > 0.0f) {
+                        params_ok &= frequency_parameter_validation(f4_minFreq_x) && frequency_parameter_validation(f4_maxFreq_x);
+                        params_ok &= compare_disp_w_freq(f4_disp_x, f4_maxFreq_x);
+                    }
+
+                    if (f4_disp_y > 0.0f) {
+                        params_ok &= frequency_parameter_validation(f4_minFreq_y) && frequency_parameter_validation(f4_maxFreq_y);
+                        params_ok &= compare_disp_w_freq(f4_disp_y, f4_maxFreq_y);
+                    }
+
+                    if (params_ok) {
+                        ESP_LOGI("NEXTION", "Parametros Real-Time Sine validos. A aguardar start...");
+                        sendAckToNextion(160); // ACK DATA OK
+                        MonitorTask = true;
+                        
+                        nextion_rt_min_freq_x = f4_minFreq_x;
+                        nextion_rt_max_freq_x = f4_maxFreq_x;
+                        nextion_rt_min_freq_y = f4_minFreq_y;
+                        nextion_rt_max_freq_y = f4_maxFreq_y;
+                        
+                        nextion_target_disp_x = f4_disp_x;
+                        nextion_target_disp_y = f4_disp_y;
+                        nextion_target_time_s = f4_duration;
+                        
+                        parameters_recv = true;
+                    } else {
+                        sendAckToNextion(166); // ACK INVALID PARAMS
+                    }
+                } else {
+                    ESP_LOGW("NEXTION", "❌ CRC inválido (esperado 0x%04X, recebido 0x%04X)", calc_crc, recv_crc);
+                    sendAckToNextion(161); // ACK ERROR
+                }
+            } else if (buffer[0] == 0x55 && buffer[1] == 0x05) {
+                //  Sweep / Chirp profile 
+                //  55 05 01 00 32 00 01 00 32 00 96 00 E6 00 00 00 00 00 2C 01 B9 2B FF FF FF 
+                
+                uint16_t m5_minFreq_y = buffer[2] | (buffer[3] << 8);
+                uint16_t m5_maxFreq_y = buffer[4] | (buffer[5] << 8);
+                uint16_t m5_minFreq_x = buffer[6] | (buffer[7] << 8);
+                uint16_t m5_maxFreq_x = buffer[8] | (buffer[9] << 8);
+                uint16_t m5_disp_y    = buffer[10] | (buffer[11] << 8);
+                uint16_t m5_disp_x    = buffer[12] | (buffer[13] << 8);
+                uint16_t m5_isBid_y   = buffer[14] | (buffer[15] << 8);
+                uint16_t m5_isBid_x   = buffer[16] | (buffer[17] << 8);
+                uint16_t m5_duration  = buffer[18] | (buffer[19] << 8);
+                uint16_t recv_crc     = buffer[20] | (buffer[21] << 8);
+
+                uint8_t payload[18];
+                for(int j = 0; j < 18; j++) {
+                    payload[j] = buffer[2 + j];
+                }
+                uint16_t calc_crc = nextion_crc16_modbus(payload, sizeof(payload));
+
+                // Conversão para floats (escala x10)
+                float f5_minFreq_y = m5_minFreq_y / 10.0f;
+                float f5_maxFreq_y = m5_maxFreq_y / 10.0f;
+                float f5_minFreq_x = m5_minFreq_x / 10.0f;
+                float f5_maxFreq_x = m5_maxFreq_x / 10.0f;
+                float f5_disp_y    = m5_disp_y / 10.0f;
+                float f5_disp_x    = m5_disp_x / 10.0f;
+                bool  b5_isBid_y   = (m5_isBid_y != 0);
+                bool  b5_isBid_x   = (m5_isBid_x != 0);
+                float f5_duration  = m5_duration / 10.0f;
+
+                if (recv_crc == calc_crc) {
+                    ESP_LOGI("NEXTION", "✅ CRC OK - Sweep/Chirp Profile Recebido:");
+                    ESP_LOGI("NEXTION", "           F_y[%.1f - %.1f]Hz  F_x[%.1f - %.1f]Hz", f5_minFreq_y, f5_maxFreq_y, f5_minFreq_x, f5_maxFreq_x);
+                    ESP_LOGI("NEXTION", "           D_y: %.1fmm, D_x: %.1fmm, Dur: %.1fs", f5_disp_y, f5_disp_x, f5_duration);
+                    ESP_LOGI("NEXTION", "           Bidirecional_y: %s, Bidirecional_x: %s", b5_isBid_y ? "SIM" : "NAO", b5_isBid_x ? "SIM" : "NAO");
+
+                    bool params_ok = true;
+                    params_ok &= displacement_parameter_validation(f5_disp_x);
+                    params_ok &= displacement_parameter_validation(f5_disp_y);
+                    params_ok &= time_parameter_validation(f5_duration);
+
+                    if (f5_disp_x > 0.0f) {
+                        params_ok &= frequency_parameter_validation(f5_minFreq_x) && frequency_parameter_validation(f5_maxFreq_x);
+                        params_ok &= compare_disp_w_freq(f5_disp_x, f5_maxFreq_x);
+                        if (f5_minFreq_x > f5_maxFreq_x) {
+                            ESP_LOGW("NEXTION", "Sweep: Freq Min X (%.1f) maior que Freq Max X (%.1f)!", f5_minFreq_x, f5_maxFreq_x);
+                            params_ok = false;
+                        }
+                    }
+
+                    if (f5_disp_y > 0.0f) {
+                        params_ok &= frequency_parameter_validation(f5_minFreq_y) && frequency_parameter_validation(f5_maxFreq_y);
+                        params_ok &= compare_disp_w_freq(f5_disp_y, f5_maxFreq_y);
+                        if (f5_minFreq_y > f5_maxFreq_y) {
+                            ESP_LOGW("NEXTION", "Sweep: Freq Min Y (%.1f) maior que Freq Max Y (%.1f)!", f5_minFreq_y, f5_maxFreq_y);
+                            params_ok = false;
+                        }
+                    }
+
+                    if (params_ok) {
+                        ESP_LOGI("NEXTION", "Parametros Sweep/Chirp validos. A aguardar start...");
+                        sendAckToNextion(160); // ACK DATA OK
+                        MonitorTask = true;
+                        
+                        nextion_sweep_min_freq_x = f5_minFreq_x; nextion_sweep_max_freq_x = f5_maxFreq_x;
+                        nextion_sweep_min_freq_y = f5_minFreq_y; nextion_sweep_max_freq_y = f5_maxFreq_y;
+                        nextion_sweep_isBid_x = b5_isBid_x; nextion_sweep_isBid_y = b5_isBid_y;
+                        nextion_target_disp_x = f5_disp_x; nextion_target_disp_y = f5_disp_y;
+                        nextion_target_time_s = f5_duration;
+                        
+                        parameters_recv = true;
+                    } else {
+                        sendAckToNextion(166); // ACK INVALID PARAMS
+                    }
+                } else {
+                    ESP_LOGW("NEXTION", "❌ CRC inválido (esperado 0x%04X, recebido 0x%04X)", calc_crc, recv_crc);
+                    sendAckToNextion(161); // ACK ERROR
                 }
             }
             // End Shaking Table Profiles Data Packet (0x55) -------------------------------------------------------------

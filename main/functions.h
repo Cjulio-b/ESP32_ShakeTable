@@ -34,6 +34,16 @@ extern float nextion_trapz_end_freq_y;
 extern float nextion_trapz_accel_time_y;
 extern float nextion_trapz_cruise_time_y;
 extern float nextion_trapz_decel_time_y;
+extern float nextion_rt_min_freq_x;
+extern float nextion_rt_max_freq_x;
+extern float nextion_rt_min_freq_y;
+extern float nextion_rt_max_freq_y;
+extern float nextion_sweep_min_freq_x;
+extern float nextion_sweep_max_freq_x;
+extern float nextion_sweep_min_freq_y;
+extern float nextion_sweep_max_freq_y;
+extern bool nextion_sweep_isBid_x;
+extern bool nextion_sweep_isBid_y;
 extern bool parameters_recv;
 
 // GPIO functions ---------------------------------------
