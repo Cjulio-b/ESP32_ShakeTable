@@ -375,6 +375,7 @@ esp_err_t stepper_rmt_run_realtime_sine_profile(stepper_rmt_context_t *ctx, floa
     // CASE 1: Rotação Contínua (Curso Máximo)
     if (target_p2p_mm >= max_p2p - 0.1f) {
         while (esp_timer_get_time() - start_time_us < duration_us) {
+            if (nextion_profile == 0) break;
             int adc_val = 0;
             adc_oneshot_read(adc_handle, adc_chan, &adc_val);
             
@@ -406,12 +407,8 @@ esp_err_t stepper_rmt_run_realtime_sine_profile(stepper_rmt_context_t *ctx, floa
         int q = 0;
 
         while (1) {
-            // Verifica se o tempo acabou APENAS quando regressa ao centro (evita parar com a mesa de lado)
-            if (q > 0 && (q % 4 == 0)) {
-                if (esp_timer_get_time() - start_time_us >= duration_us) {
-                    break;
-                }
-            }
+            if (esp_timer_get_time() - start_time_us >= duration_us) break;
+            if (nextion_profile == 0) break;
 
             int adc_val = 0;
             adc_oneshot_read(adc_handle, adc_chan, &adc_val);
@@ -487,6 +484,7 @@ esp_err_t stepper_rmt_run_trapezoidal_freq_profile(stepper_rmt_context_t *ctx, f
         while (1) {
             int64_t elapsed_us = esp_timer_get_time() - start_time_us;
             if (elapsed_us >= total_duration_us) break;
+            if (nextion_profile == 0) break;
 
             float t = (float)elapsed_us / 1000000.0f;
             float freq_hz = start_freq_hz;
@@ -523,7 +521,8 @@ esp_err_t stepper_rmt_run_trapezoidal_freq_profile(stepper_rmt_context_t *ctx, f
 
         while (1) {
             int64_t elapsed_us = esp_timer_get_time() - start_time_us;
-            if (q > 0 && (q % 4 == 0) && elapsed_us >= total_duration_us) break;
+            if (elapsed_us >= total_duration_us) break;
+            if (nextion_profile == 0) break;
 
             float t = (float)elapsed_us / 1000000.0f;
             float freq_hz = start_freq_hz;
@@ -599,6 +598,7 @@ esp_err_t stepper_rmt_run_multistep_freq_profile(stepper_rmt_context_t *ctx, flo
             int64_t current_time = esp_timer_get_time();
             int64_t elapsed_total_us = current_time - start_time_us;
             if (elapsed_total_us >= total_duration_us) break;
+            if (nextion_profile == 0) break;
 
             int64_t elapsed_in_stage_us = current_time - stage_start_us;
             if (elapsed_in_stage_us >= current_stage_duration_us) {
@@ -639,20 +639,18 @@ esp_err_t stepper_rmt_run_multistep_freq_profile(stepper_rmt_context_t *ctx, flo
             int64_t current_time = esp_timer_get_time();
             int64_t elapsed_total_us = current_time - start_time_us;
 
-            // Sync stage jumps and termination ONLY when passing through table center (q % 4 == 0)
-            if (q > 0 && (q % 4 == 0)) {
-                if (elapsed_total_us >= total_duration_us) break;
-
-                int64_t elapsed_in_stage_us = current_time - stage_start_us;
-                if (elapsed_in_stage_us >= current_stage_duration_us) {
-                    stage_idx = (stage_idx + 1) % num_stages;
-                    stage_start_us = current_time;
-                    current_stage_duration_us = (int64_t)(times_s[stage_idx] * 1000000.0f);
-                    prev_freq_hz = current_freq; // Store actual frequency before stage jump
-                }
-            }
+            if (elapsed_total_us >= total_duration_us) break;
+            if (nextion_profile == 0) break;
 
             int64_t elapsed_in_stage_us = current_time - stage_start_us;
+            if (elapsed_in_stage_us >= current_stage_duration_us) {
+                stage_idx = (stage_idx + 1) % num_stages;
+                stage_start_us = current_time;
+                current_stage_duration_us = (int64_t)(times_s[stage_idx] * 1000000.0f);
+                prev_freq_hz = current_freq; // Store actual frequency before stage jump
+                elapsed_in_stage_us = current_time - stage_start_us;
+            }
+
             float freq_hz = freqs_hz[stage_idx];
             if (elapsed_in_stage_us < blend_duration_us) {
                 float t_blend = (float)elapsed_in_stage_us / (float)blend_duration_us;
@@ -713,6 +711,7 @@ esp_err_t stepper_rmt_run_sweep_profile(stepper_rmt_context_t *ctx, float target
         while (1) {
             int64_t elapsed_us = esp_timer_get_time() - start_time_us;
             if (elapsed_us >= total_duration_us) break;
+            if (nextion_profile == 0) break;
 
             float t = (float)elapsed_us / 1000000.0f;
             if (is_bidirectional) {
@@ -746,7 +745,8 @@ esp_err_t stepper_rmt_run_sweep_profile(stepper_rmt_context_t *ctx, float target
 
         while (1) {
             int64_t elapsed_us = esp_timer_get_time() - start_time_us;
-            if (q > 0 && (q % 4 == 0) && elapsed_us >= total_duration_us) break;
+            if (elapsed_us >= total_duration_us) break;
+            if (nextion_profile == 0) break;
 
             float t = (float)elapsed_us / 1000000.0f;
             if (is_bidirectional) {
@@ -792,7 +792,7 @@ esp_err_t stepper_rmt_run_sweep_profile(stepper_rmt_context_t *ctx, float target
 // =========================================================================
 
 // Procura e devolve o caminho do primeiro ficheiro .bin no disco
-static bool get_stored_sismo_file(char* filepath_out, size_t max_len) {
+bool get_stored_sismo_file(char* filepath_out, size_t max_len) {
     DIR *dir = opendir("/storage");
     if (!dir) return false;
     
@@ -1141,11 +1141,26 @@ void stepper_rmt_task_1(void *arg)
                     break;
                 case 6:
                 {
+                    motor1_ready = false;
+                    ESP_LOGI(TAG, "Motor 1: A executar Auto-Homing preparatorio...");
+                    stepper_rmt_homing(motor1, 22, 23);
+                    motor1_ready = true;
+
                     char filepath[256];
                     if (get_stored_sismo_file(filepath, sizeof(filepath))) {
-                        stepper_rmt_run_file_profile(motor1, filepath, &my_table);
+                        while (!motor2_ready && nextion_profile == 6) {
+                            vTaskDelay(pdMS_TO_TICKS(10));
+                        }
+                        if (nextion_profile == 6) {
+                            sendAckToNextion(163); // Envia ACK START MOTION
+                            stepper_rmt_run_file_profile(motor1, filepath, &my_table);
+                        }
                     } else {
                         ESP_LOGW(TAG, "Nenhum ficheiro .bin encontrado na memoria para reproduzir!");
+                        while (!motor2_ready && nextion_profile == 6) {
+                            vTaskDelay(pdMS_TO_TICKS(10));
+                        }
+                        if (nextion_profile == 6) sendAckToNextion(165); // ACK ERROR
                         vTaskDelay(pdMS_TO_TICKS(1000));
                     }
                     break;
@@ -1403,11 +1418,24 @@ void stepper_rmt_task_2(void *arg)
                     break;
                 case 6:
                 {
+                    motor2_ready = false;
+                    ESP_LOGI(TAG, "Motor 2: A executar Auto-Homing preparatorio...");
+                    stepper_rmt_homing(motor2, 27, 33);
+                    motor2_ready = true;
+
                     char filepath[256];
                     if (get_stored_sismo_file(filepath, sizeof(filepath))) {
-                        stepper_rmt_run_file_profile(motor2, filepath, &my_table);
+                        while (!motor1_ready && nextion_profile == 6) {
+                            vTaskDelay(pdMS_TO_TICKS(10));
+                        }
+                        if (nextion_profile == 6) {
+                            stepper_rmt_run_file_profile(motor2, filepath, &my_table);
+                        }
                     } else {
                         ESP_LOGW(TAG, "Nenhum ficheiro .bin encontrado na memoria para reproduzir!");
+                        while (!motor1_ready && nextion_profile == 6) {
+                            vTaskDelay(pdMS_TO_TICKS(10));
+                        }
                         vTaskDelay(pdMS_TO_TICKS(1000));
                     }
                     break;

@@ -119,6 +119,10 @@ void sendAckToNextion(int ackmsg)
             nextion_send_command("va0.val=166"); // ACK INVALID PARAMS (0xA6)
             ESP_LOGW("NEXTION", "↩️ Parametros invalidos recebidos do HMI");
             break;
+        case 167:
+            nextion_send_command("va0.val=167"); // ACK FILE NOT FOUND (0xA7)
+            ESP_LOGW("NEXTION", "↩️ Ficheiro para reprodução não encontrado na memória");
+            break;
         default:
             ESP_LOGW("NEXTION", "Ack desconhecido: %d", ackmsg);
     }
@@ -255,6 +259,18 @@ void rxFromNextion(const uint8_t *data, int len)
                         nextion_profile = 5; // Sweep Profile 
                      } else if (component_id == 18 && event == 0) { // <-- ID BOTÃO STOP
                         ESP_LOGI("NEXTION", "Stop Sweep / Chirp Profile Selected!");
+                        sendAckToNextion(164); // ACK MOTION END
+                        nextion_profile = 0; // Sinal de STOP
+                        parameters_recv = false;
+                     }
+                }
+                else if (page == 7) {
+                    if (component_id == 8 && event == 0 && parameters_recv) { // <-- ID BOTÃO START
+                        ESP_LOGI("NEXTION", "Start File Profile Selected!");
+                        sendAckToNextion(162); // ACK HOMING
+                        nextion_profile = 6; // File Profile 
+                     } else if (component_id == 9 && event == 0) { // <-- ID BOTÃO STOP
+                        ESP_LOGI("NEXTION", "Stop File Profile Selected!");
                         sendAckToNextion(164); // ACK MOTION END
                         nextion_profile = 0; // Sinal de STOP
                         parameters_recv = false;
@@ -668,6 +684,21 @@ void rxFromNextion(const uint8_t *data, int len)
                 } else {
                     ESP_LOGW("NEXTION", "❌ CRC inválido (esperado 0x%04X, recebido 0x%04X)", calc_crc, recv_crc);
                     sendAckToNextion(161); // ACK ERROR
+                }
+            }
+            else if (buffer[0] == 0x55 && buffer[1] == 0x06) {
+                // Perfil por Ficheiro (File Profile)
+                ESP_LOGI("NEXTION", "File Profile Selecionado (0x55 0x06)");
+                
+                char filepath[256];
+                if (get_stored_sismo_file(filepath, sizeof(filepath))) {
+                    ESP_LOGI("NEXTION", "✅ Ficheiro sísmico encontrado: %s. A aguardar start...", filepath);
+                    sendAckToNextion(160); // ACK DATA OK
+                    parameters_recv = true; // Liberta o bloqueio para permitir premir START
+                } else {
+                    ESP_LOGW("NEXTION", "❌ Nenhum ficheiro sísmico na memória.");
+                    sendAckToNextion(167); // ACK FILE NOT FOUND
+                    parameters_recv = false; // Mantém o bloqueio
                 }
             }
             // End Shaking Table Profiles Data Packet (0x55) -------------------------------------------------------------
