@@ -8,11 +8,37 @@
 #include "driver/gpio.h"
 #include "l298n_stepper.h"
 #include "kinematics.h"
+#include "mcp23017.h"
 
 static const char* TAG = "ESP32_ShakeTable";
 #define UART_TASK_STACK_SIZE 4096
 extern TaskHandle_t rxTaskHandle;
 extern TaskHandle_t txTaskHandle;
+
+#define I2C_MASTER_SCL_IO 22
+#define I2C_MASTER_SDA_IO 23
+
+i2c_master_bus_handle_t i2c_bus_handle = NULL;
+i2c_master_dev_handle_t mcp_handle = NULL;
+
+void init_i2c_system(void) {
+    i2c_master_bus_config_t bus_config = {
+        .i2c_port = -1,
+        .sda_io_num = I2C_MASTER_SDA_IO,
+        .scl_io_num = I2C_MASTER_SCL_IO,
+        .clk_source = I2C_CLK_SRC_DEFAULT,
+        .glitch_ignore_cnt = 7,
+        .flags.enable_internal_pullup = true,
+    };
+    
+    ESP_ERROR_CHECK(i2c_new_master_bus(&bus_config, &i2c_bus_handle));
+    
+    // Inicializa o Expansor de I/O
+    if (mcp23017_init(i2c_bus_handle, MCP23017_I2C_ADDR_DEFAULT, &mcp_handle) == ESP_OK) {
+        // Exemplo: Configurar todos os Pinos do BANK A como OUTPUTS (0x00)
+        mcp23017_write_reg(mcp_handle, MCP23017_IODIRA, 0x00);
+    }
+}
 
 void app_main(void)
 {
@@ -22,6 +48,7 @@ void app_main(void)
 	init_uart();
 	start_wifi_ap(); //start Wi-Fi
 	start_webserver(); //start HTTP server
+	init_i2c_system(); // Inicia I2C e deteta o MCP23017
 
 	// (1/2) --- Teste do stepper motor L298N half-step ------
     ESP_LOGI("STEPMOTOR", "Initializing L298N and stepper motor...");

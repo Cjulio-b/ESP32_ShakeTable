@@ -7,6 +7,7 @@
 #include "esp_http_server.h"  // Para httpd_req_t e httpd_handle_t
 #include "esp_adc/adc_oneshot.h"
 #include "kinematics.h"
+#include "driver/i2c_master.h"
 
 // GLOBAL Variables -----------------------------------
 extern bool MonitorTask;
@@ -46,6 +47,10 @@ extern bool nextion_sweep_isBid_x;
 extern bool nextion_sweep_isBid_y;
 extern bool parameters_recv;
 
+// I2C Handles globais --------------------------------
+extern i2c_master_bus_handle_t i2c_bus_handle;
+extern i2c_master_dev_handle_t mcp_handle;
+
 // GPIO functions ---------------------------------------
 void check_current_config(void);
 void testing_led(void);
@@ -58,6 +63,9 @@ void init_littlefs(void);
 void start_wifi_ap(void);
 esp_err_t gpio_handler(httpd_req_t *req);
 httpd_handle_t start_webserver(void);
+
+// I2C functions ------------------------------------------------
+void init_i2c_system(void);
 
 // UART functions -----------------------------------------------
 void init_uart(void);

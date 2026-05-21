@@ -930,7 +930,7 @@ void stepper_rmt_task_1(void *arg)
 
     // Execute Homing calibration on startup
 /*     if (motor1) {
-        stepper_rmt_homing(motor1, 22, 23);
+        stepper_rmt_homing(motor1, 13, 12);
     }
  */
     while (1) {
@@ -953,7 +953,7 @@ void stepper_rmt_task_1(void *arg)
                     
                     motor1_ready = false;
                     ESP_LOGI(TAG, "Motor 1: A executar Auto-Homing preparatorio...");
-                    stepper_rmt_homing(motor1, 22, 23);
+                    stepper_rmt_homing(motor1, 13, 12);
                     motor1_ready = true;
 
                     if (nextion_target_disp_x > 0.0f && nextion_target_freq_x > 0.0f && nextion_target_time_s > 0.0f) {
@@ -1000,7 +1000,7 @@ void stepper_rmt_task_1(void *arg)
 
                     motor1_ready = false;
                     ESP_LOGI(TAG, "Motor 1: A executar Auto-Homing preparatorio...");
-                    stepper_rmt_homing(motor1, 22, 23);
+                    stepper_rmt_homing(motor1, 13, 12);
                     motor1_ready = true;
 
                     if (nextion_target_disp_x > 0.0f && nextion_target_time_s > 0.0f) {
@@ -1039,7 +1039,7 @@ void stepper_rmt_task_1(void *arg)
                     
                     motor1_ready = false;
                     ESP_LOGI(TAG, "Motor 1: A executar Auto-Homing preparatorio...");
-                    stepper_rmt_homing(motor1, 22, 23);
+                    stepper_rmt_homing(motor1, 13, 12);
                     motor1_ready = true;
 
                     if (nextion_target_disp_x > 0.0f) {
@@ -1079,7 +1079,7 @@ void stepper_rmt_task_1(void *arg)
                     
                     motor1_ready = false;
                     ESP_LOGI(TAG, "Motor 1: A executar Auto-Homing preparatorio...");
-                    stepper_rmt_homing(motor1, 22, 23);
+                    stepper_rmt_homing(motor1, 13, 12);
                     motor1_ready = true;
 
                     if (nextion_target_disp_x > 0.0f && nextion_target_time_s > 0.0f) {
@@ -1109,7 +1109,7 @@ void stepper_rmt_task_1(void *arg)
                     // Sweep / Chirp Profile (IEC/ISO Standard Logarithmic Sweep)
                     motor1_ready = false;
                     ESP_LOGI(TAG, "Motor 1: A executar Auto-Homing preparatorio...");
-                    stepper_rmt_homing(motor1, 22, 23);
+                    stepper_rmt_homing(motor1, 13, 12);
                     motor1_ready = true;
 
                     if (nextion_target_disp_x > 0.0f && nextion_target_time_s > 0.0f) {
@@ -1143,7 +1143,7 @@ void stepper_rmt_task_1(void *arg)
                 {
                     motor1_ready = false;
                     ESP_LOGI(TAG, "Motor 1: A executar Auto-Homing preparatorio...");
-                    stepper_rmt_homing(motor1, 22, 23);
+                    stepper_rmt_homing(motor1, 13, 12);
                     motor1_ready = true;
 
                     char filepath[256];
