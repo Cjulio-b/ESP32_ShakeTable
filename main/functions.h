@@ -11,6 +11,10 @@
 
 // GLOBAL Variables -----------------------------------
 extern bool MonitorTask;
+extern volatile bool motor1_busy;
+extern volatile bool motor2_busy;
+extern volatile bool motor1_ready;
+extern volatile bool motor2_ready;
 
 // Nextion Profile Parameters -------------------------
 extern volatile int8_t nextion_profile;
@@ -50,6 +54,8 @@ extern bool parameters_recv;
 // I2C Handles globais --------------------------------
 extern i2c_master_bus_handle_t i2c_bus_handle;
 extern i2c_master_dev_handle_t mcp_handle;
+extern i2c_master_dev_handle_t adxl_table_handle;
+extern i2c_master_dev_handle_t adxl_specimen_handle;
 
 // GPIO functions ---------------------------------------
 void check_current_config(void);
@@ -99,5 +105,6 @@ esp_err_t stepper_rmt_run_sweep_profile(stepper_rmt_context_t *ctx, float target
 bool get_stored_sismo_file(char* filepath_out, size_t max_len);
 void stepper_rmt_task_1(void *arg);
 void stepper_rmt_task_2(void *arg);
+void accelerometer_task(void *arg);
 
 #endif /* MAIN_FUNCTIONS_H_ */

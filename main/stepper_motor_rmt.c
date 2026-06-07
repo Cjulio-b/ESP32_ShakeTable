@@ -150,7 +150,8 @@ esp_err_t stepper_rmt_homing(stepper_rmt_context_t *ctx, uint8_t gpio_limit_righ
     // Initialize local kinematics structure for debugging and verification purposes
     shake_table_config_t my_table;
     kinematics_init_axis(&my_table.axis_x, 33.0f, 66.0f); // 33mm peak-to-peak displacement, 66mm rod length
-    kinematics_init_stepper(&my_table.stepper_x, 1.8f, 32); // 1.8 degree step, 32 microsteps (6400 steps/rev)
+    float gear_ratio = 5.18f;
+    kinematics_init_stepper(&my_table.stepper_x, 1.8f / gear_ratio, 32); // 1.8 degree step, 32 microsteps
 
     // Configure limit switch pins as inputs with pull-ups
     gpio_config_t limit_conf = {
@@ -166,8 +167,12 @@ esp_err_t stepper_rmt_homing(stepper_rmt_context_t *ctx, uint8_t gpio_limit_righ
     gpio_set_level(ctx->gpio_en, STEP_MOTOR_ENABLE_LEVEL);
     vTaskDelay(pdMS_TO_TICKS(100)); // Allow time for coil current to stabilize
 
-    uint32_t homing_speed_hz = 500; // Homing speed
-    uint32_t chunk_size = 20;       // Check limit switch every 20 microsteps (small fraction of a mm)
+    // Calcular a velocidade de homing com base nas caracteristicas mecanicas (ex: 0.25 voltas/segundo)
+    float homing_rev_per_sec = 0.25f; // Podes aumentar para 0.5f se achares muito lento
+    uint32_t homing_speed_hz = (uint32_t)(my_table.stepper_x.microsteps_per_rev * homing_rev_per_sec);
+    
+    uint32_t chunk_size = (uint32_t)(homing_speed_hz * 0.05f); // Verifica os fins de curso a cada 50 milissegundos
+    if (chunk_size < 20) chunk_size = 20;
     rmt_transmit_config_t tx_config = { .loop_count = 0 };
 
     // --- STEP 1: Move Right (Clockwise) until the right limit switch is hit ---
@@ -916,7 +921,8 @@ void stepper_rmt_task_1(void *arg)
     
     shake_table_config_t my_table;
     kinematics_init_axis(&my_table.axis_x, 33.0f, 66.0f); // 33mm peak-to-peak displacement, 66mm rod length
-    kinematics_init_stepper(&my_table.stepper_x, 1.8f, 32); // 1.8 degree step, 32 microsteps
+    float gear_ratio = 5.18f;
+    kinematics_init_stepper(&my_table.stepper_x, 1.8f / gear_ratio, 32); // 1.8 degree step, 32 microsteps
 
     // Configuração do ADC1 (Vamos usar o GPIO 34 = ADC1_CHANNEL_6)
     if (s_adc1_handle == NULL) {
@@ -930,16 +936,16 @@ void stepper_rmt_task_1(void *arg)
 
     // Execute Homing calibration on startup
 /*     if (motor1) {
-        stepper_rmt_homing(motor1, 13, 12);
+        stepper_rmt_homing(motor1, 14, 12);
     }
  */
     while (1) {
         // LARGER STEPPER
         uint8_t current_profile = nextion_profile;
         // Fallback: Se premir o botão físico sem ensaio ativo, executa o Case 6 por defeito
-        if (gpio_get_level(GPIO_NUM_14) == 0) {
-            current_profile = (nextion_profile == 0) ? 6 : nextion_profile; 
-        }
+        // if (gpio_get_level(GPIO_NUM_14) == 0) {
+        //     current_profile = (nextion_profile == 0) ? 6 : nextion_profile; 
+        // }
 
         if (motor1 && current_profile != 0) {
             motor1_busy = true; // Levanta a bandeira de ocupado
@@ -953,7 +959,7 @@ void stepper_rmt_task_1(void *arg)
                     
                     motor1_ready = false;
                     ESP_LOGI(TAG, "Motor 1: A executar Auto-Homing preparatorio...");
-                    stepper_rmt_homing(motor1, 13, 12);
+                    stepper_rmt_homing(motor1, 14, 12);
                     motor1_ready = true;
 
                     if (nextion_target_disp_x > 0.0f && nextion_target_freq_x > 0.0f && nextion_target_time_s > 0.0f) {
@@ -1000,7 +1006,7 @@ void stepper_rmt_task_1(void *arg)
 
                     motor1_ready = false;
                     ESP_LOGI(TAG, "Motor 1: A executar Auto-Homing preparatorio...");
-                    stepper_rmt_homing(motor1, 13, 12);
+                    stepper_rmt_homing(motor1, 14, 12);
                     motor1_ready = true;
 
                     if (nextion_target_disp_x > 0.0f && nextion_target_time_s > 0.0f) {
@@ -1039,7 +1045,7 @@ void stepper_rmt_task_1(void *arg)
                     
                     motor1_ready = false;
                     ESP_LOGI(TAG, "Motor 1: A executar Auto-Homing preparatorio...");
-                    stepper_rmt_homing(motor1, 13, 12);
+                    stepper_rmt_homing(motor1, 14, 12);
                     motor1_ready = true;
 
                     if (nextion_target_disp_x > 0.0f) {
@@ -1079,7 +1085,7 @@ void stepper_rmt_task_1(void *arg)
                     
                     motor1_ready = false;
                     ESP_LOGI(TAG, "Motor 1: A executar Auto-Homing preparatorio...");
-                    stepper_rmt_homing(motor1, 13, 12);
+                    stepper_rmt_homing(motor1, 14, 12);
                     motor1_ready = true;
 
                     if (nextion_target_disp_x > 0.0f && nextion_target_time_s > 0.0f) {
@@ -1109,7 +1115,7 @@ void stepper_rmt_task_1(void *arg)
                     // Sweep / Chirp Profile (IEC/ISO Standard Logarithmic Sweep)
                     motor1_ready = false;
                     ESP_LOGI(TAG, "Motor 1: A executar Auto-Homing preparatorio...");
-                    stepper_rmt_homing(motor1, 13, 12);
+                    stepper_rmt_homing(motor1, 14, 12);
                     motor1_ready = true;
 
                     if (nextion_target_disp_x > 0.0f && nextion_target_time_s > 0.0f) {
@@ -1143,7 +1149,7 @@ void stepper_rmt_task_1(void *arg)
                 {
                     motor1_ready = false;
                     ESP_LOGI(TAG, "Motor 1: A executar Auto-Homing preparatorio...");
-                    stepper_rmt_homing(motor1, 13, 12);
+                    stepper_rmt_homing(motor1, 14, 12);
                     motor1_ready = true;
 
                     char filepath[256];
@@ -1209,7 +1215,8 @@ void stepper_rmt_task_2(void *arg)
 
     shake_table_config_t my_table;
     kinematics_init_axis(&my_table.axis_x, 33.0f, 66.0f); // 33mm peak-to-peak displacement, 66mm rod length
-    kinematics_init_stepper(&my_table.stepper_x, 1.8f, 32); // 1.8 degree step, 32 microsteps
+    float gear_ratio = 5.18f;
+    kinematics_init_stepper(&my_table.stepper_x, 1.8f / gear_ratio, 32); // 1.8 degree step, 32 microsteps
 
     // Atraso curto para dar prioridade de inicialização à Task 1, mas garante segurança se a Task 2 for mais rápida
     vTaskDelay(pdMS_TO_TICKS(50));
