@@ -141,17 +141,11 @@ esp_err_t stepper_rmt_run_steps(stepper_rmt_context_t *ctx, uint32_t uniform_spe
     return rmt_tx_wait_all_done(ctx->motor_chan, -1);
 }
 
-esp_err_t stepper_rmt_homing(stepper_rmt_context_t *ctx, uint8_t gpio_limit_right, uint8_t gpio_limit_left)
+ esp_err_t stepper_rmt_homing(stepper_rmt_context_t *ctx, uint8_t gpio_limit_right, uint8_t gpio_limit_left, const shake_table_config_t *table_config)
 {
-    if (!ctx) return ESP_ERR_INVALID_ARG;
+    if (!ctx || !table_config) return ESP_ERR_INVALID_ARG;
 
     ESP_LOGI(TAG, "Starting HOMING on EN:%d, DIR:%d", ctx->gpio_en, ctx->gpio_dir);
-
-    // Initialize local kinematics structure for debugging and verification purposes
-    shake_table_config_t my_table;
-    kinematics_init_axis(&my_table.axis_x, 33.0f, 66.0f); // 33mm peak-to-peak displacement, 66mm rod length
-    float gear_ratio = 5.18f;
-    kinematics_init_stepper(&my_table.stepper_x, 1.8f / gear_ratio, 32); // 1.8 degree step, 32 microsteps
 
     // Configure limit switch pins as inputs with pull-ups
     gpio_config_t limit_conf = {
@@ -169,7 +163,7 @@ esp_err_t stepper_rmt_homing(stepper_rmt_context_t *ctx, uint8_t gpio_limit_righ
 
     // Calcular a velocidade de homing com base nas caracteristicas mecanicas (ex: 0.25 voltas/segundo)
     float homing_rev_per_sec = 0.25f; // Podes aumentar para 0.5f se achares muito lento
-    uint32_t homing_speed_hz = (uint32_t)(my_table.stepper_x.microsteps_per_rev * homing_rev_per_sec);
+    uint32_t homing_speed_hz = (uint32_t)(table_config->stepper_x.microsteps_per_rev * homing_rev_per_sec);
     
     uint32_t chunk_size = (uint32_t)(homing_speed_hz * 0.05f); // Verifica os fins de curso a cada 50 milissegundos
     if (chunk_size < 20) chunk_size = 20;
@@ -204,9 +198,9 @@ esp_err_t stepper_rmt_homing(stepper_rmt_context_t *ctx, uint8_t gpio_limit_righ
     ESP_LOGI(TAG, "HOMING: Left limit hit (-180 deg)! Total measured steps = %lu", total_steps);
     
     // --- KINEMATICS VERIFICATION (End-to-End) ---
-    float total_angle = kinematics_calc_angular_position(&my_table.stepper_x, total_steps);
+    float total_angle = kinematics_calc_angular_position(&table_config->stepper_x, total_steps);
     ESP_LOGI(TAG, "[Homing Verification] End-to-end movement:");
-    ESP_LOGI(TAG, "  -> Measured Steps: %lu (Theoretical for 180 deg = %lu)", total_steps, my_table.stepper_x.microsteps_per_rev / 2);
+    ESP_LOGI(TAG, "  -> Measured Steps: %lu (Theoretical for 180 deg = %lu)", total_steps, table_config->stepper_x.microsteps_per_rev / 2);
     ESP_LOGI(TAG, "  -> Calculated Travelled Angle: %.2f degrees", total_angle);
     
     vTaskDelay(pdMS_TO_TICKS(500));
@@ -222,8 +216,8 @@ esp_err_t stepper_rmt_homing(stepper_rmt_context_t *ctx, uint8_t gpio_limit_righ
     ESP_LOGI(TAG, "HOMING: Calibration Finished. Motor is at Center (0 deg).");
 
     // --- KINEMATICS VERIFICATION (Center) ---
-    float center_angle = kinematics_calc_angular_position(&my_table.stepper_x, center_steps);
-    float real_center_pos = kinematics_calc_linear_position_relative_90(&my_table.axis_x, center_angle);
+    float center_angle = kinematics_calc_angular_position(&table_config->stepper_x, center_steps);
+    float real_center_pos = kinematics_calc_linear_position_relative_90(&table_config->axis_x, center_angle);
     ESP_LOGI(TAG, "[Homing Verification] Center Position (intermediate dead center):");
     ESP_LOGI(TAG, "  -> Motor Angle: %.2f degrees (Expected ~90.00 degrees)", center_angle);
     ESP_LOGI(TAG, "  -> Real Position (Relative to 90 deg): %.2f mm (Expected ~0.00 mm)", real_center_pos);
@@ -914,13 +908,16 @@ esp_err_t stepper_rmt_run_file_profile(stepper_rmt_context_t *ctx, const char* f
     return ESP_OK;
 }
 
+/*
+   ### MOTOR 1 TASK - AXIS X ###
+*/
 void stepper_rmt_task_1(void *arg)
 {
     // Initialize Motor 1 with the configured pins
     stepper_rmt_context_t *motor1 = stepper_rmt_init(5, 32, 4);
     
     shake_table_config_t my_table;
-    kinematics_init_axis(&my_table.axis_x, 33.0f, 66.0f); // 33mm peak-to-peak displacement, 66mm rod length
+    kinematics_init_axis(&my_table.axis_x, 27.0f, 100.0f); // 27mm peak-to-peak displacement, 100mm rod length
     float gear_ratio = 5.18f;
     kinematics_init_stepper(&my_table.stepper_x, 1.8f / gear_ratio, 32); // 1.8 degree step, 32 microsteps
 
@@ -936,7 +933,7 @@ void stepper_rmt_task_1(void *arg)
 
     // Execute Homing calibration on startup
 /*     if (motor1) {
-        stepper_rmt_homing(motor1, 14, 12);
+        stepper_rmt_homing(motor1, 14, 12, &my_table);
     }
  */
     while (1) {
@@ -959,7 +956,7 @@ void stepper_rmt_task_1(void *arg)
                     
                     motor1_ready = false;
                     ESP_LOGI(TAG, "Motor 1: A executar Auto-Homing preparatorio...");
-                    stepper_rmt_homing(motor1, 14, 12);
+                    stepper_rmt_homing(motor1, 14, 12, &my_table);
                     motor1_ready = true;
 
                     if (nextion_target_disp_x > 0.0f && nextion_target_freq_x > 0.0f && nextion_target_time_s > 0.0f) {
@@ -1006,7 +1003,7 @@ void stepper_rmt_task_1(void *arg)
 
                     motor1_ready = false;
                     ESP_LOGI(TAG, "Motor 1: A executar Auto-Homing preparatorio...");
-                    stepper_rmt_homing(motor1, 14, 12);
+                    stepper_rmt_homing(motor1, 14, 12, &my_table);
                     motor1_ready = true;
 
                     if (nextion_target_disp_x > 0.0f && nextion_target_time_s > 0.0f) {
@@ -1045,7 +1042,7 @@ void stepper_rmt_task_1(void *arg)
                     
                     motor1_ready = false;
                     ESP_LOGI(TAG, "Motor 1: A executar Auto-Homing preparatorio...");
-                    stepper_rmt_homing(motor1, 14, 12);
+                    stepper_rmt_homing(motor1, 14, 12, &my_table);
                     motor1_ready = true;
 
                     if (nextion_target_disp_x > 0.0f) {
@@ -1085,7 +1082,7 @@ void stepper_rmt_task_1(void *arg)
                     
                     motor1_ready = false;
                     ESP_LOGI(TAG, "Motor 1: A executar Auto-Homing preparatorio...");
-                    stepper_rmt_homing(motor1, 14, 12);
+                    stepper_rmt_homing(motor1, 14, 12, &my_table);
                     motor1_ready = true;
 
                     if (nextion_target_disp_x > 0.0f && nextion_target_time_s > 0.0f) {
@@ -1115,7 +1112,7 @@ void stepper_rmt_task_1(void *arg)
                     // Sweep / Chirp Profile (IEC/ISO Standard Logarithmic Sweep)
                     motor1_ready = false;
                     ESP_LOGI(TAG, "Motor 1: A executar Auto-Homing preparatorio...");
-                    stepper_rmt_homing(motor1, 14, 12);
+                    stepper_rmt_homing(motor1, 14, 12, &my_table);
                     motor1_ready = true;
 
                     if (nextion_target_disp_x > 0.0f && nextion_target_time_s > 0.0f) {
@@ -1149,7 +1146,7 @@ void stepper_rmt_task_1(void *arg)
                 {
                     motor1_ready = false;
                     ESP_LOGI(TAG, "Motor 1: A executar Auto-Homing preparatorio...");
-                    stepper_rmt_homing(motor1, 14, 12);
+                    stepper_rmt_homing(motor1, 14, 12, &my_table);
                     motor1_ready = true;
 
                     char filepath[256];
@@ -1208,13 +1205,16 @@ void stepper_rmt_task_1(void *arg)
     }
 }
 
+/*
+   ### MOTOR 2 TASK - AXIS Y ###
+*/
 void stepper_rmt_task_2(void *arg)
 {
     // Initialize Motor 2 with the specified pins (EN: 15, DIR: 19, STEP: 18)
     stepper_rmt_context_t *motor2 = stepper_rmt_init(19, 15, 18);
 
     shake_table_config_t my_table;
-    kinematics_init_axis(&my_table.axis_x, 33.0f, 66.0f); // 33mm peak-to-peak displacement, 66mm rod length
+    kinematics_init_axis(&my_table.axis_x, 27.0f, 95.0f); // 27mm peak-to-peak displacement, 95mm rod length
     float gear_ratio = 5.18f;
     kinematics_init_stepper(&my_table.stepper_x, 1.8f / gear_ratio, 32); // 1.8 degree step, 32 microsteps
 
@@ -1233,7 +1233,7 @@ void stepper_rmt_task_2(void *arg)
 
     // Execute Homing calibration on startup
 /*     if (motor2) {
-        stepper_rmt_homing(motor2, 27, 33);
+        stepper_rmt_homing(motor2, 27, 33, &my_table);
     } */
     while (1) {
         // Smaller STEPPER
@@ -1253,7 +1253,7 @@ void stepper_rmt_task_2(void *arg)
                     // stepper_rmt_run_sine_profile(motor2, 32.0f, 2.0f, 5.0f, &my_table); // Original rígido                
                     motor2_ready = false;
                     ESP_LOGI(TAG, "Motor 2: A executar Auto-Homing preparatorio...");
-                    stepper_rmt_homing(motor2, 27, 33);
+                    stepper_rmt_homing(motor2, 27, 33, &my_table);
                     motor2_ready = true;
 
                     // Sine Profile
@@ -1296,7 +1296,7 @@ void stepper_rmt_task_2(void *arg)
 
                     motor2_ready = false;
                     ESP_LOGI(TAG, "Motor 2: A executar Auto-Homing preparatorio...");
-                    stepper_rmt_homing(motor2, 27, 33);
+                    stepper_rmt_homing(motor2, 27, 33, &my_table);
                     motor2_ready = true;
 
                     if (nextion_target_disp_y > 0.0f && nextion_target_time_s > 0.0f) {
@@ -1331,7 +1331,7 @@ void stepper_rmt_task_2(void *arg)
                     
                     motor2_ready = false;
                     ESP_LOGI(TAG, "Motor 2: A executar Auto-Homing preparatorio...");
-                    stepper_rmt_homing(motor2, 27, 33);
+                    stepper_rmt_homing(motor2, 27, 33, &my_table);
                     motor2_ready = true;
 
                     if (nextion_target_disp_y > 0.0f) {
@@ -1367,7 +1367,7 @@ void stepper_rmt_task_2(void *arg)
                     //  Example: Amplitude 32.0mm, Duration: 10 Segundos, Dynamic frequency manage by ADC between 0.5Hz to 5.0Hz        
                     //stepper_rmt_run_realtime_sine_profile(motor2, 33.0f, 10.0f, s_adc1_handle, ADC_CHANNEL_3, 0.5f, 5.0f, &my_table);  
                     
-                    stepper_rmt_homing(motor2, 27, 33);
+                    stepper_rmt_homing(motor2, 27, 33, &my_table);
                     motor2_ready = true;
 
                     if (nextion_target_disp_y > 0.0f && nextion_target_time_s > 0.0f) {
@@ -1395,7 +1395,7 @@ void stepper_rmt_task_2(void *arg)
                     // Sweep / Chirp Profile (IEC/ISO Standard Logarithmic Sweep)
                     motor2_ready = false;
                     ESP_LOGI(TAG, "Motor 2: A executar Auto-Homing preparatorio...");
-                    stepper_rmt_homing(motor2, 27, 33);
+                    stepper_rmt_homing(motor2, 27, 33, &my_table);
                     motor2_ready = true;
 
                     if (nextion_target_disp_y > 0.0f && nextion_target_time_s > 0.0f) {
@@ -1427,7 +1427,7 @@ void stepper_rmt_task_2(void *arg)
                 {
                     motor2_ready = false;
                     ESP_LOGI(TAG, "Motor 2: A executar Auto-Homing preparatorio...");
-                    stepper_rmt_homing(motor2, 27, 33);
+                    stepper_rmt_homing(motor2, 27, 33, &my_table);
                     motor2_ready = true;
 
                     char filepath[256];

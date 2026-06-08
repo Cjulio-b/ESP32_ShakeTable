@@ -143,7 +143,7 @@ void return_data_from_nextion(const uint8_t *buff, int idx)
 
 bool displacement_parameter_validation(float disp_mm)
 {
-    if (disp_mm < 0.0f || disp_mm > 33.0f) { // Limite teórico da mesa
+    if (disp_mm < 0.0f || disp_mm > 42.5f) { // Limite teórico da mesa
         ESP_LOGW("NEXTION", "Displacement parameter out of range");
         return false;
     } else {
@@ -153,7 +153,7 @@ bool displacement_parameter_validation(float disp_mm)
 
 bool frequency_parameter_validation(float freq_hz)
 {
-    if (freq_hz < 0.0f || freq_hz > 50.0f) { // Exemplo: limite 50Hz
+    if (freq_hz < 0.0f || freq_hz > 5.0f) { // Exemplo: limite 5Hz
         ESP_LOGW("NEXTION", "Frequency parameter out of range");
         return false;
     } else {
