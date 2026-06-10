@@ -57,6 +57,10 @@ extern i2c_master_dev_handle_t mcp_handle;
 extern i2c_master_dev_handle_t adxl_table_handle;
 extern i2c_master_dev_handle_t adxl_specimen_handle;
 
+// Global Configuration Structures --------------------
+extern shake_table_config_t table_config_x;
+extern shake_table_config_t table_config_y;
+
 // GPIO functions ---------------------------------------
 void check_current_config(void);
 void testing_led(void);
@@ -72,6 +76,9 @@ httpd_handle_t start_webserver(void);
 
 // I2C functions ------------------------------------------------
 void init_i2c_system(void);
+
+// NVS Configuration Manager functions --------------------------
+#include "config_manager.h"
 
 // UART functions -----------------------------------------------
 void init_uart(void);

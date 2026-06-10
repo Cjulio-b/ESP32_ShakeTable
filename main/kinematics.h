@@ -14,6 +14,7 @@ typedef struct {
 // Structure for the stepper motor parameters
 typedef struct {
     float step_angle_deg;          // Base resolution of the motor (e.g., 1.8º)
+    float gear_ratio;              // Gearbox ratio (e.g., 5.18)
     uint16_t microsteps;           // Microstepping mode (e.g., 32)
     
     // Automatically calculated parameters
@@ -22,23 +23,21 @@ typedef struct {
     float angular_resolution_deg;  // Angular resolution per microstep (e.g., 0.05625º)
 } stepper_config_t;
 
-// Global structure that aggregates the X and Y axes and motors
+// Global structure that aggregates the physical and motor config for a single axis
 typedef struct {
-    shake_table_axis_config_t axis_x;
-    shake_table_axis_config_t axis_y;
-    stepper_config_t stepper_x;
-    stepper_config_t stepper_y;
+    shake_table_axis_config_t axis;
+    stepper_config_t stepper;
 } shake_table_config_t;
 
 /**
  * @brief Initializes the stepper motor properties by calculating steps/rev and resolution
  */
-void kinematics_init_stepper(stepper_config_t *stepper, float step_angle_deg, uint16_t microsteps);
+void kinematics_init_stepper(stepper_config_t *stepper, float step_angle_deg, float gear_ratio, uint16_t microsteps);
 
 /**
  * @brief Initializes the physical dimensions of the table (Slider-Crank mechanism)
  */
-void kinematics_init_axis(shake_table_axis_config_t *axis, float peak_to_peak_mm, float rod_length_mm);
+void kinematics_init_axis(shake_table_axis_config_t *axis, float peak_to_peak_safety_limit_mm, float crank_radius_mm, float rod_length_mm);
 
 /**
  * @brief Calculates the current angular position of the motor (in degrees [0 to 360]) based on the given microsteps

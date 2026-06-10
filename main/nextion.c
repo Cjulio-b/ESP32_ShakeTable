@@ -41,14 +41,14 @@ bool nextion_sweep_isBid_x = false;
 bool nextion_sweep_isBid_y = false;
 bool parameters_recv = false;
 
-// CRC-16 Modbus (polinómio 0xA001, inicial 0xFFFF)
+// CRC-16 Modbus (polynomial 0xA001, initial 0xFFFF)
 uint16_t nextion_crc16_modbus(const uint8_t *data, size_t len) {
     uint16_t crc = 0xFFFF;
     for (size_t pos = 0; pos < len; pos++) {
         crc ^= (uint16_t)data[pos];
         for (int i = 0; i < 8; i++) {
             if (crc & 0x0001)
-                crc = (crc >> 1) ^ 0xA001;
+                crc = (crc >> 1) ^ 0xA001; // LSB is 1, XOR with polynomial
             else
                 crc >>= 1;
         }
@@ -66,10 +66,10 @@ void nextion_send_command(const char *cmd)
 
 void nextion_cmd_syntax(const char *objname, const char *datatype, const char *value)
 {
-    //objname: nome do objeto (ex: t0, n0, x0)
-    //datatype: tipo de dado (ex: txt, val)
-    //value: valor a enviar (ex: \"Hello\"", 123, 0x23)
-    //exemplo de output: t0.txt=\"Hello\"", n0.val=123, x0.val=0x23
+    // objname: object name (e.g., t0, n0, x0)
+    // datatype: data type (e.g., txt, val)
+    // value: value to send (e.g., \"Hello\"", "123")
+    // example output: t0.txt=\"Hello\"", n0.val=123
     char cmd[64];
     snprintf(cmd, sizeof(cmd), "%s.%s=%s", objname, datatype, value);
     nextion_send_command(cmd);
@@ -99,32 +99,32 @@ void sendAckToNextion(int ackmsg)
             nextion_send_command("va0.val=160"); // ACK OK (0xA0)
             break;
         case 161:
-            nextion_send_command("va0.val=161"); // ACK ERROR (0xA1)
-            ESP_LOGW("NEXTION", "↩️ Pedido de retransmissão enviado");
+            nextion_send_command("va0.val=161"); // ACK ERROR - CRC/DATA INVALID (0xA1)
+            ESP_LOGW("NEXTION", "↩️ Retransmission request sent (Invalid Data)");
             break;
         case 162:
-            nextion_send_command("va0.val=162"); // ACK HOMMING (0xA2)
+            nextion_send_command("va0.val=162"); // ACK HOMING (0xA2)
             break;
         case 163:
             nextion_send_command("va0.val=163"); // ACK START MOTION (0xA3)
             break;
         case 164:
-            nextion_send_command("va0.val=164"); // ACK MOTION END (0xA4)
+            nextion_send_command("va0.val=164"); // ACK MOTION ENDED (0xA4)
             break;
         case 165:
             nextion_send_command("va0.val=165"); // ACK MOTION ERROR (0xA5)
-            ESP_LOGW("NEXTION", "↩️ Erro durante o movimento da mesa");
+            ESP_LOGW("NEXTION", "↩️ Error during table motion");
             break;
         case 166:
             nextion_send_command("va0.val=166"); // ACK INVALID PARAMS (0xA6)
-            ESP_LOGW("NEXTION", "↩️ Parametros invalidos recebidos do HMI");
+            ESP_LOGW("NEXTION", "↩️ Invalid parameters received from HMI");
             break;
         case 167:
             nextion_send_command("va0.val=167"); // ACK FILE NOT FOUND (0xA7)
-            ESP_LOGW("NEXTION", "↩️ Ficheiro para reprodução não encontrado na memória");
+            ESP_LOGW("NEXTION", "↩️ File for playback not found in memory");
             break;
         default:
-            ESP_LOGW("NEXTION", "Ack desconhecido: %d", ackmsg);
+            ESP_LOGW("NEXTION", "Unknown ACK: %d", ackmsg);
     }
 }
 
@@ -141,9 +141,12 @@ void return_data_from_nextion(const uint8_t *buff, int idx)
     }
 }
 
-bool displacement_parameter_validation(float disp_mm)
+bool displacement_parameter_validation(float disp_mm, char axis)
 {
-    if (disp_mm < 0.0f || disp_mm > 42.5f) { // Limite teórico da mesa
+    // Use the P2P safety limit defined in the corresponding axis configuration
+    float max_p2p = (axis == 'x') ? table_config_x.axis.peak_to_peak_disp_mm : table_config_y.axis.peak_to_peak_disp_mm;
+
+    if (disp_mm < 0.0f || disp_mm > max_p2p) {
         ESP_LOGW("NEXTION", "Displacement parameter out of range");
         return false;
     } else {
@@ -153,7 +156,7 @@ bool displacement_parameter_validation(float disp_mm)
 
 bool frequency_parameter_validation(float freq_hz)
 {
-    if (freq_hz < 0.0f || freq_hz > 5.0f) { // Exemplo: limite 5Hz
+    if (freq_hz < 0.0f || freq_hz > 5.0f) { // Example: 5Hz limit
         ESP_LOGW("NEXTION", "Frequency parameter out of range");
         return false;
     } else {
@@ -163,7 +166,7 @@ bool frequency_parameter_validation(float freq_hz)
 
 bool time_parameter_validation(float time_s)
 {
-    if (time_s <= 0.0f || time_s > 1800.0f) { // Limite máximo: 30 minutos (1800s)
+    if (time_s <= 0.0f || time_s > 1800.0f) { // Maximum limit: 30 minutes (1800s)
         ESP_LOGW("NEXTION", "Time parameter out of range");
         return false;
     } else {
@@ -205,28 +208,28 @@ void rxFromNextion(const uint8_t *data, int len)
                 uint8_t component_id = buffer[2];
                 uint8_t event = buffer[3];
 
-                ESP_LOGI("NEXTION", "Evento Touch: page=%d, comp=%d, event=%d",
+                ESP_LOGI("NEXTION", "Touch Event: page=%d, comp=%d, event=%d",
                          page, component_id, event);
                 if (page==2){
                     if (component_id == 16 && event == 0 && parameters_recv) { // START button Sinewave Profile
                         ESP_LOGI("NEXTION", "Start SineWave Profile Selected!");
-                        sendAckToNextion(162); // ACK HOMING (A mesa vai preparar-se primeiro)
+                        sendAckToNextion(162); // ACK HOMING (The table will prepare first)
                         nextion_profile = 1; // Sinewave Profile 
                     } else if (component_id == 17 && event == 0) { // STOP button Sinewave Profile
                         ESP_LOGI("NEXTION", "Stop SineWave Profile Selected!");
                         sendAckToNextion(164); // ACK MOTION END
-                        nextion_profile = 0; // Sinal de STOP (aborta loop nos motores)
+                        nextion_profile = 0; // STOP signal (aborts motor loop)
                         parameters_recv = false;
                     }
-                } else if (page == 3) { // <-- SUBSTITUI 3 PELO ID DA PÁGINA MULTI-STEP NO NEXTION EDITOR
-                    if (component_id == 27 && event == 0 && parameters_recv) { // START button Multi-Step Profile (Substitui 16 pelo ID do botão)
+                } else if (page == 3) { // <-- REPLACE 3 WITH THE MULTI-STEP PAGE ID IN THE NEXTION EDITOR
+                    if (component_id == 27 && event == 0 && parameters_recv) { // START button Multi-Step Profile (Replace 16 with the button ID)
                         ESP_LOGI("NEXTION", "Start Multi-Step Profile Selected!");
                         sendAckToNextion(162); // ACK HOMING
                         nextion_profile = 2; // Multi-Step Profile 
-                    } else if (component_id == 28 && event == 0) { // STOP button Multi-Step Profile (Substitui 17 pelo ID do botão)
+                    } else if (component_id == 28 && event == 0) { // STOP button Multi-Step Profile (Replace 17 with the button ID)
                         ESP_LOGI("NEXTION", "Stop Multi-Step Profile Selected!");
                         sendAckToNextion(164); // ACK MOTION END
-                        nextion_profile = 0; // Sinal de STOP
+                        nextion_profile = 0; // STOP signal
                         parameters_recv = false;
                     }
                 } else if (page == 4) {
@@ -237,7 +240,7 @@ void rxFromNextion(const uint8_t *data, int len)
                     } else if (component_id == 18 && event == 0) { // <-- ID BOTÃO STOP
                         ESP_LOGI("NEXTION", "Stop Trapezoidal Profile Selected!");
                         sendAckToNextion(164); // ACK MOTION END
-                        nextion_profile = 0; // Sinal de STOP
+                        nextion_profile = 0; // STOP signal
                         parameters_recv = false;
                     }
                 } else if (page == 5) {
@@ -248,7 +251,7 @@ void rxFromNextion(const uint8_t *data, int len)
                      } else if (component_id == 4 && event == 0) { // <-- ID BOTÃO STOP
                         ESP_LOGI("NEXTION", "Stop Real-Time Sine Profile Selected!");
                         sendAckToNextion(164); // ACK MOTION END
-                        nextion_profile = 0; // Sinal de STOP
+                        nextion_profile = 0; // STOP signal
                         parameters_recv = false;
                      }
                 }
@@ -260,7 +263,7 @@ void rxFromNextion(const uint8_t *data, int len)
                      } else if (component_id == 18 && event == 0) { // <-- ID BOTÃO STOP
                         ESP_LOGI("NEXTION", "Stop Sweep / Chirp Profile Selected!");
                         sendAckToNextion(164); // ACK MOTION END
-                        nextion_profile = 0; // Sinal de STOP
+                        nextion_profile = 0; // STOP signal
                         parameters_recv = false;
                      }
                 }
@@ -272,13 +275,59 @@ void rxFromNextion(const uint8_t *data, int len)
                      } else if (component_id == 9 && event == 0) { // <-- ID BOTÃO STOP
                         ESP_LOGI("NEXTION", "Stop File Profile Selected!");
                         sendAckToNextion(164); // ACK MOTION END
-                        nextion_profile = 0; // Sinal de STOP
+                        nextion_profile = 0; // STOP signal
                         parameters_recv = false;
                      }
+                }
+                else if (page == 8) {
+                    if (component_id == 31 && event == 0) { // <-- DEFAULT BUTTON ID (0x1F = 31)
+                        ESP_LOGI("NEXTION", "Default Settings Button Pressed! Restoring defaults to NVS...");
+                        
+                        // Reset global structs to default values
+                        kinematics_init_axis(&table_config_x.axis, 27.33f, 14.0f, 100.0f);
+                        kinematics_init_stepper(&table_config_x.stepper, 1.8f, 5.18f, 32);
+                        
+                        kinematics_init_axis(&table_config_y.axis, 26.84f, 14.0f, 95.0f);
+                        kinematics_init_stepper(&table_config_y.stepper, 1.8f, 5.18f, 32);
+                        
+                        // Save directly to NVS
+                        config_manager_save('x', &table_config_x);
+                        config_manager_save('y', &table_config_y);
+                        
+                        ESP_LOGI("NEXTION", "Default configuration saved to flash memory (NVS)!");
+                        
+                        nextion_send_command("Param0.val=0");
+                    }
                 }
 
             }
             // End Touch Event (0x65) -------------------------------------------------------------
+            // Custom Request for Settings: "55 55 FF FF FF"
+            else if (buffer[0] == 0x55 && buffer[1] == 0x55) {
+                ESP_LOGI("NEXTION", "Request for current configuration received (0x55 0x55)");
+                
+                char value_str[16];
+
+                #define SEND_PARAM(obj, val, scale) \
+                    snprintf(value_str, sizeof(value_str), "%d", (int)(val * scale)); \
+                    nextion_cmd_syntax(obj, "val", value_str); \
+                    vTaskDelay(pdMS_TO_TICKS(15)); // Delay to prevent Nextion buffer overflow
+
+                SEND_PARAM("x0", table_config_x.axis.peak_to_peak_disp_mm, 10.0f);
+                SEND_PARAM("x1", table_config_y.axis.peak_to_peak_disp_mm, 10.0f);
+                SEND_PARAM("x2", table_config_x.axis.crank_radius_mm, 10.0f);
+                SEND_PARAM("x3", table_config_y.axis.crank_radius_mm, 10.0f);
+                SEND_PARAM("x4", table_config_x.axis.rod_length_mm, 10.0f);
+                SEND_PARAM("x5", table_config_y.axis.rod_length_mm, 10.0f);
+                SEND_PARAM("x6", table_config_x.stepper.step_angle_deg, 10.0f);
+                SEND_PARAM("x7", table_config_y.stepper.step_angle_deg, 10.0f);
+                SEND_PARAM("x8", table_config_x.stepper.microsteps, 10.0f);
+                SEND_PARAM("x9", table_config_y.stepper.microsteps, 10.0f);
+                SEND_PARAM("x10", table_config_x.stepper.gear_ratio, 100.0f);
+                SEND_PARAM("x11", table_config_y.stepper.gear_ratio, 100.0f);
+                
+                nextion_send_command("Param0.val=1");
+            }
             
             // Shaking Table Profiles Data Packet (0x55) -------------------------------------------------------------
             else if (buffer[0] == 0x55 && buffer[1] == 0x01) {
@@ -293,10 +342,10 @@ void rxFromNextion(const uint8_t *data, int len)
                 uint16_t time_s = buffer[10] | (buffer[11] << 8);
                 uint16_t recv_crc = buffer[12] | (buffer[13] << 8);
 
-                uint8_t payload[] = {buffer[2],buffer[3],buffer[4],buffer[5],buffer[6],buffer[7],buffer[8],buffer[9],buffer[10],buffer[11]}; // dados sem header, tipo e CRC    
-                uint16_t calc_crc = nextion_crc16_modbus(payload, sizeof(payload)); // calcula CRC dos dados recebidos
+                uint8_t payload[] = {buffer[2],buffer[3],buffer[4],buffer[5],buffer[6],buffer[7],buffer[8],buffer[9],buffer[10],buffer[11]}; // data without header, type and CRC
+                uint16_t calc_crc = nextion_crc16_modbus(payload, sizeof(payload)); // calculate CRC of received data
 
-                // Conversão para floats (escala x10 enviada pelo Nextion)
+                // Convert to floats (scale x10 sent by Nextion)
                 float f_freq_y = freq_y / 10.0f;
                 float f_freq_x = freq_x / 10.0f;
                 float f_disp_y = disp_y / 10.0f;
@@ -306,7 +355,7 @@ void rxFromNextion(const uint8_t *data, int len)
                 if (recv_crc == calc_crc) {
                     ESP_LOGI("NEXTION", "✅ CRC OK - F_y=%.1fHz, F_x=%.1fHz, D_y=%.1fmm, D_x=%.1fmm, Tmp=%.1fs",
                             f_freq_y, f_freq_x, f_disp_y, f_disp_x, f_time_s);
-                    if(displacement_parameter_validation(f_disp_x) && displacement_parameter_validation(f_disp_y) &&
+                    if(displacement_parameter_validation(f_disp_x, 'x') && displacement_parameter_validation(f_disp_y, 'y') &&
                        frequency_parameter_validation(f_freq_x) && frequency_parameter_validation(f_freq_y) &&
                        time_parameter_validation(f_time_s) && compare_disp_w_freq(f_disp_x, f_freq_x) && compare_disp_w_freq(f_disp_y, f_freq_y)) {
                         ESP_LOGI("NEXTION", "All parameters are valid. Waiting to start motion profile...");
@@ -317,14 +366,14 @@ void rxFromNextion(const uint8_t *data, int len)
                         nextion_target_disp_y = f_disp_y;
                         nextion_target_time_s = f_time_s;
                                                 
-                        sendAckToNextion(160); // ACK DATA OK
-                        MonitorTask = true; // ativa monitorização de stack
+                        sendAckToNextion(160); // ACK: DATA OK
+                        MonitorTask = true; // enable stack monitoring
                         parameters_recv=true;
                     }else {
-                        sendAckToNextion(166); // ACK INVALID PARAMS
+                        sendAckToNextion(166); // ACK: INVALID PARAMS
                     }    
                 } else {
-                    ESP_LOGW("NEXTION", "❌ CRC inválido (esperado 0x%04X, recebido 0x%04X)", calc_crc, recv_crc);
+                    ESP_LOGW("NEXTION", "❌ Invalid CRC (expected 0x%04X, received 0x%04X)", calc_crc, recv_crc);
                     sendAckToNextion(161); // ACK ERROR;
                 }
             } else if (buffer[0] == 0x55 && buffer[1] == 0x02) {
@@ -357,9 +406,9 @@ void rxFromNextion(const uint8_t *data, int len)
                 for(int j = 0; j < 38; j++) {
                     payload[j] = buffer[2 + j];
                 }
-                uint16_t calc_crc = nextion_crc16_modbus(payload, sizeof(payload)); // calcula CRC dos dados recebidos
+                uint16_t calc_crc = nextion_crc16_modbus(payload, sizeof(payload)); // calculate CRC of received data
 
-                // Conversão para floats (escala x10 enviada pelo Nextion)
+                // Convert to floats (scale x10 sent by Nextion)
                 float f2_freq_y1 = m2_freq_y1 / 10.0f;
                 float f2_freq_y2 = m2_freq_y2 / 10.0f;
                 float f2_freq_y3 = m2_freq_y3 / 10.0f;
@@ -385,12 +434,12 @@ void rxFromNextion(const uint8_t *data, int len)
                     ESP_LOGI("NEXTION", "           T_y[%.1f, %.1f, %.1f, %.1f]s  T_x[%.1f, %.1f, %.1f, %.1f]s", f2_time_y1, f2_time_y2, f2_time_y3, f2_time_y4, f2_time_x1, f2_time_x2, f2_time_x3, f2_time_x4);
                     ESP_LOGI("NEXTION", "           D_y: %.1fmm, D_x: %.1fmm, TempTotal: %.1fs", f2_disp_y, f2_disp_x, f2_time_s);
                         
-                    // Validação acumulada para manter o código legível e estruturado
+                    // Accumulated validation to keep the code readable and structured
                     bool params_ok = true;
 
-                    // 1. Valida Deslocamentos e Tempos
-                    params_ok &= displacement_parameter_validation(f2_disp_x);
-                    params_ok &= displacement_parameter_validation(f2_disp_y);
+                    // 1. Validate Displacements and Times
+                    params_ok &= displacement_parameter_validation(f2_disp_x, 'x');
+                    params_ok &= displacement_parameter_validation(f2_disp_y, 'y');
                     params_ok &= time_parameter_validation(f2_time_s);
 
                     // 2. Valida Frequências do Motor X
@@ -400,25 +449,25 @@ void rxFromNextion(const uint8_t *data, int len)
                                      frequency_parameter_validation(f2_freq_x3) && frequency_parameter_validation(f2_freq_x4);
                     }
                         
-                    // 3. Valida Frequências do Motor Y
+                    // 3. Validate Motor Y Frequencies
                     if (f2_disp_y > 0.0f) {
                         params_ok &= time_parameter_validation(f2_time_y1) && time_parameter_validation(f2_time_y2) && time_parameter_validation(f2_time_y3) && time_parameter_validation(f2_time_y4);
                         params_ok &= frequency_parameter_validation(f2_freq_y1) && frequency_parameter_validation(f2_freq_y2) &&
                                      frequency_parameter_validation(f2_freq_y3) && frequency_parameter_validation(f2_freq_y4);
                     }
 
-                    // 4. Valida coerência Deslocamento vs Frequência (somamos as freqs de cada eixo para o teste)
+                    // 4. Validate Displacement vs. Frequency coherence (sum frequencies for each axis for the test)
                     float sum_freq_x = f2_freq_x1 + f2_freq_x2 + f2_freq_x3 + f2_freq_x4;
                     float sum_freq_y = f2_freq_y1 + f2_freq_y2 + f2_freq_y3 + f2_freq_y4;
                     params_ok &= compare_disp_w_freq(f2_disp_x, sum_freq_x);
                     params_ok &= compare_disp_w_freq(f2_disp_y, sum_freq_y);
 
                     if (params_ok) {
-                        ESP_LOGI("NEXTION", "Todos os parametros validos. A aguardar inicio do Multi-Step...");
-                        sendAckToNextion(160); // ACK DATA OK
-                        MonitorTask = true;    // ativa monitorização de stack
+                        ESP_LOGI("NEXTION", "All parameters valid. Waiting to start Multi-Step...");
+                        sendAckToNextion(160); // ACK: DATA OK
+                        MonitorTask = true;    // enable stack monitoring
                         
-                        // 1. Guardar as frequências Multi-Step nos arrays globais
+                        // 1. Store Multi-Step frequencies in global arrays
                         nextion_multistep_freq_x[0] = f2_freq_x1; nextion_multistep_freq_x[1] = f2_freq_x2;
                         nextion_multistep_freq_x[2] = f2_freq_x3; nextion_multistep_freq_x[3] = f2_freq_x4;
                         
@@ -431,18 +480,18 @@ void rxFromNextion(const uint8_t *data, int len)
                         nextion_multistep_time_y[0] = f2_time_y1; nextion_multistep_time_y[1] = f2_time_y2;
                         nextion_multistep_time_y[2] = f2_time_y3; nextion_multistep_time_y[3] = f2_time_y4;
 
-                        // 2. Reutilizar as variáveis globais de deslocamento e tempo
+                        // 2. Reuse global displacement and time variables
                         nextion_target_disp_x = f2_disp_x;
                         nextion_target_disp_y = f2_disp_y;
                         nextion_target_time_s = f2_time_s;
                         
-                        // 3. Ativar a flag para permitir que o botão "Start" funcione
+                        // 3. Set the flag to allow the "Start" button to work
                         parameters_recv = true;
                     } else {
                         sendAckToNextion(166); // ACK INVALID PARAMS
                     }
                 } else {
-                    ESP_LOGW("NEXTION", "❌ CRC inválido (esperado 0x%04X, recebido 0x%04X)", calc_crc, recv_crc);
+                    ESP_LOGW("NEXTION", "❌ Invalid CRC (expected 0x%04X, received 0x%04X)", calc_crc, recv_crc);
                     sendAckToNextion(161); // ACK ERROR;
                 }
             } else if (buffer[0] == 0x55 && buffer[1] == 0x03) {
@@ -472,7 +521,7 @@ void rxFromNextion(const uint8_t *data, int len)
                 }
                 uint16_t calc_crc = nextion_crc16_modbus(payload, sizeof(payload)); 
 
-                // Conversão para floats (escala x10)
+                // Convert to floats (scale x10)
                 float f3_startFreq_y  = m3_startFreq_y / 10.0f;
                 float f3_cruiseFreq_y = m3_cruiseFreq_y / 10.0f;
                 float f3_endFreq_y    = m3_endFreq_y / 10.0f;
@@ -489,14 +538,14 @@ void rxFromNextion(const uint8_t *data, int len)
                 float f3_disp_x       = m3_disp_x / 10.0f;
                     
                 if (recv_crc == calc_crc) {
-                    ESP_LOGI("NEXTION", "✅ CRC OK - Trapezoidal Profile Recebido:");
+                    ESP_LOGI("NEXTION", "✅ CRC OK - Trapezoidal Profile Received:");
                     ESP_LOGI("NEXTION", "           F_y[%.1f, %.1f, %.1f]Hz  F_x[%.1f, %.1f, %.1f]Hz", f3_startFreq_y, f3_cruiseFreq_y, f3_endFreq_y, f3_startFreq_x, f3_cruiseFreq_x, f3_endFreq_x);
                     ESP_LOGI("NEXTION", "           T_y[%.1f, %.1f, %.1f]s   T_x[%.1f, %.1f, %.1f]s", f3_acelTime_y, f3_cruiseTime_y, f3_decelTime_y, f3_acelTime_x, f3_cruiseTime_x, f3_decelTime_x);
                     ESP_LOGI("NEXTION", "           D_y: %.1fmm, D_x: %.1fmm", f3_disp_y, f3_disp_x);
                         
                     bool params_ok = true;
-                    params_ok &= displacement_parameter_validation(f3_disp_x);
-                    params_ok &= displacement_parameter_validation(f3_disp_y);
+                    params_ok &= displacement_parameter_validation(f3_disp_x, 'x');
+                    params_ok &= displacement_parameter_validation(f3_disp_y, 'y');
 
                     if (f3_disp_x > 0.0f) {
                         float total_time_x = f3_acelTime_x + f3_cruiseTime_x + f3_decelTime_x;
@@ -513,8 +562,8 @@ void rxFromNextion(const uint8_t *data, int len)
                     }
 
                     if (params_ok) {
-                        ESP_LOGI("NEXTION", "Parametros Trapezoidais validos. A aguardar start...");
-                        sendAckToNextion(160); // ACK DATA OK
+                        ESP_LOGI("NEXTION", "Trapezoidal parameters are valid. Waiting for start...");
+                        sendAckToNextion(160); // ACK: DATA OK
                         MonitorTask = true;
                         
                         nextion_trapz_start_freq_x = f3_startFreq_x; nextion_trapz_cruise_freq_x = f3_cruiseFreq_x; nextion_trapz_end_freq_x = f3_endFreq_x;
@@ -528,10 +577,10 @@ void rxFromNextion(const uint8_t *data, int len)
                         
                         parameters_recv = true;
                     } else {
-                        sendAckToNextion(166); // ACK INVALID PARAMS
+                        sendAckToNextion(166); // ACK: INVALID PARAMS
                     }
                 } else {
-                    ESP_LOGW("NEXTION", "❌ CRC inválido (esperado 0x%04X, recebido 0x%04X)", calc_crc, recv_crc);
+                    ESP_LOGW("NEXTION", "❌ Invalid CRC (expected 0x%04X, received 0x%04X)", calc_crc, recv_crc);
                     sendAckToNextion(161); // ACK ERROR;
                 } 
             } else if (buffer[0] == 0x55 && buffer[1] == 0x04) {
@@ -554,7 +603,7 @@ void rxFromNextion(const uint8_t *data, int len)
                 }
                 uint16_t calc_crc = nextion_crc16_modbus(payload, sizeof(payload));
 
-                // Conversão para floats (escala x10)
+                // Convert to floats (scale x10)
                 float f4_minFreq_y = m4_minFreq_y / 10.0f;
                 float f4_maxFreq_y = m4_maxFreq_y / 10.0f;
                 float f4_minFreq_x = m4_minFreq_x / 10.0f;
@@ -564,13 +613,13 @@ void rxFromNextion(const uint8_t *data, int len)
                 float f4_duration  = m4_duration / 10.0f;
                     
                 if (recv_crc == calc_crc) {
-                    ESP_LOGI("NEXTION", "✅ CRC OK - Real-Time Sine Profile Recebido:");
+                    ESP_LOGI("NEXTION", "✅ CRC OK - Real-Time Sine Profile Received:");
                     ESP_LOGI("NEXTION", "           F_y[%.1f - %.1f]Hz  F_x[%.1f - %.1f]Hz", f4_minFreq_y, f4_maxFreq_y, f4_minFreq_x, f4_maxFreq_x);
                     ESP_LOGI("NEXTION", "           D_y: %.1fmm, D_x: %.1fmm, Dur: %.1fs", f4_disp_y, f4_disp_x, f4_duration);
 
                     bool params_ok = true;
-                    params_ok &= displacement_parameter_validation(f4_disp_x);
-                    params_ok &= displacement_parameter_validation(f4_disp_y);
+                    params_ok &= displacement_parameter_validation(f4_disp_x, 'x');
+                    params_ok &= displacement_parameter_validation(f4_disp_y, 'y');
                     params_ok &= time_parameter_validation(f4_duration);
 
                     if (f4_disp_x > 0.0f) {
@@ -584,8 +633,8 @@ void rxFromNextion(const uint8_t *data, int len)
                     }
 
                     if (params_ok) {
-                        ESP_LOGI("NEXTION", "Parametros Real-Time Sine validos. A aguardar start...");
-                        sendAckToNextion(160); // ACK DATA OK
+                        ESP_LOGI("NEXTION", "Real-Time Sine parameters are valid. Waiting for start...");
+                        sendAckToNextion(160); // ACK: DATA OK
                         MonitorTask = true;
                         
                         nextion_rt_min_freq_x = f4_minFreq_x;
@@ -599,10 +648,10 @@ void rxFromNextion(const uint8_t *data, int len)
                         
                         parameters_recv = true;
                     } else {
-                        sendAckToNextion(166); // ACK INVALID PARAMS
+                        sendAckToNextion(166); // ACK: INVALID PARAMS
                     }
                 } else {
-                    ESP_LOGW("NEXTION", "❌ CRC inválido (esperado 0x%04X, recebido 0x%04X)", calc_crc, recv_crc);
+                    ESP_LOGW("NEXTION", "❌ Invalid CRC (expected 0x%04X, received 0x%04X)", calc_crc, recv_crc);
                     sendAckToNextion(161); // ACK ERROR
                 }
             } else if (buffer[0] == 0x55 && buffer[1] == 0x05) {
@@ -626,7 +675,7 @@ void rxFromNextion(const uint8_t *data, int len)
                 }
                 uint16_t calc_crc = nextion_crc16_modbus(payload, sizeof(payload));
 
-                // Conversão para floats (escala x10)
+                // Convert to floats (scale x10)
                 float f5_minFreq_y = m5_minFreq_y / 10.0f;
                 float f5_maxFreq_y = m5_maxFreq_y / 10.0f;
                 float f5_minFreq_x = m5_minFreq_x / 10.0f;
@@ -638,21 +687,21 @@ void rxFromNextion(const uint8_t *data, int len)
                 float f5_duration  = m5_duration / 10.0f;
 
                 if (recv_crc == calc_crc) {
-                    ESP_LOGI("NEXTION", "✅ CRC OK - Sweep/Chirp Profile Recebido:");
+                    ESP_LOGI("NEXTION", "✅ CRC OK - Sweep/Chirp Profile Received:");
                     ESP_LOGI("NEXTION", "           F_y[%.1f - %.1f]Hz  F_x[%.1f - %.1f]Hz", f5_minFreq_y, f5_maxFreq_y, f5_minFreq_x, f5_maxFreq_x);
                     ESP_LOGI("NEXTION", "           D_y: %.1fmm, D_x: %.1fmm, Dur: %.1fs", f5_disp_y, f5_disp_x, f5_duration);
                     ESP_LOGI("NEXTION", "           Bidirecional_y: %s, Bidirecional_x: %s", b5_isBid_y ? "SIM" : "NAO", b5_isBid_x ? "SIM" : "NAO");
 
                     bool params_ok = true;
-                    params_ok &= displacement_parameter_validation(f5_disp_x);
-                    params_ok &= displacement_parameter_validation(f5_disp_y);
+                    params_ok &= displacement_parameter_validation(f5_disp_x, 'x');
+                    params_ok &= displacement_parameter_validation(f5_disp_y, 'y');
                     params_ok &= time_parameter_validation(f5_duration);
 
                     if (f5_disp_x > 0.0f) {
                         params_ok &= frequency_parameter_validation(f5_minFreq_x) && frequency_parameter_validation(f5_maxFreq_x);
                         params_ok &= compare_disp_w_freq(f5_disp_x, f5_maxFreq_x);
                         if (f5_minFreq_x > f5_maxFreq_x) {
-                            ESP_LOGW("NEXTION", "Sweep: Freq Min X (%.1f) maior que Freq Max X (%.1f)!", f5_minFreq_x, f5_maxFreq_x);
+                            ESP_LOGW("NEXTION", "Sweep: Min Freq X (%.1f) greater than Max Freq X (%.1f)!", f5_minFreq_x, f5_maxFreq_x);
                             params_ok = false;
                         }
                     }
@@ -661,14 +710,14 @@ void rxFromNextion(const uint8_t *data, int len)
                         params_ok &= frequency_parameter_validation(f5_minFreq_y) && frequency_parameter_validation(f5_maxFreq_y);
                         params_ok &= compare_disp_w_freq(f5_disp_y, f5_maxFreq_y);
                         if (f5_minFreq_y > f5_maxFreq_y) {
-                            ESP_LOGW("NEXTION", "Sweep: Freq Min Y (%.1f) maior que Freq Max Y (%.1f)!", f5_minFreq_y, f5_maxFreq_y);
+                            ESP_LOGW("NEXTION", "Sweep: Min Freq Y (%.1f) greater than Max Freq Y (%.1f)!", f5_minFreq_y, f5_maxFreq_y);
                             params_ok = false;
                         }
                     }
 
                     if (params_ok) {
-                        ESP_LOGI("NEXTION", "Parametros Sweep/Chirp validos. A aguardar start...");
-                        sendAckToNextion(160); // ACK DATA OK
+                        ESP_LOGI("NEXTION", "Sweep/Chirp parameters are valid. Waiting for start...");
+                        sendAckToNextion(160); // ACK: DATA OK
                         MonitorTask = true;
                         
                         nextion_sweep_min_freq_x = f5_minFreq_x; nextion_sweep_max_freq_x = f5_maxFreq_x;
@@ -679,26 +728,74 @@ void rxFromNextion(const uint8_t *data, int len)
                         
                         parameters_recv = true;
                     } else {
-                        sendAckToNextion(166); // ACK INVALID PARAMS
+                        sendAckToNextion(166); // ACK: INVALID PARAMS
                     }
                 } else {
-                    ESP_LOGW("NEXTION", "❌ CRC inválido (esperado 0x%04X, recebido 0x%04X)", calc_crc, recv_crc);
+                    ESP_LOGW("NEXTION", "❌ Invalid CRC (expected 0x%04X, received 0x%04X)", calc_crc, recv_crc);
                     sendAckToNextion(161); // ACK ERROR
                 }
             }
             else if (buffer[0] == 0x55 && buffer[1] == 0x06) {
-                // Perfil por Ficheiro (File Profile)
-                ESP_LOGI("NEXTION", "File Profile Selecionado (0x55 0x06)");
+                // File Profile
+                ESP_LOGI("NEXTION", "File Profile Selected (0x55 0x06)");
                 
                 char filepath[256];
                 if (get_stored_sismo_file(filepath, sizeof(filepath))) {
-                    ESP_LOGI("NEXTION", "✅ Ficheiro sísmico encontrado: %s. A aguardar start...", filepath);
-                    sendAckToNextion(160); // ACK DATA OK
-                    parameters_recv = true; // Liberta o bloqueio para permitir premir START
+                    ESP_LOGI("NEXTION", "✅ Seismic file found: %s. Waiting for start...", filepath);
+                    sendAckToNextion(160); // ACK: DATA OK
+                    parameters_recv = true; // Release lock to allow START button press
                 } else {
-                    ESP_LOGW("NEXTION", "❌ Nenhum ficheiro sísmico na memória.");
-                    sendAckToNextion(167); // ACK FILE NOT FOUND
-                    parameters_recv = false; // Mantém o bloqueio
+                    ESP_LOGW("NEXTION", "❌ No seismic file in memory.");
+                    sendAckToNextion(167); // ACK: FILE NOT FOUND
+                    parameters_recv = false; // Keep lock
+                }
+            }
+            // Machine Configuration (0x55 0x00)
+            else if (buffer[0] == 0x55 && buffer[1] == 0x00) {
+                // Exemplo: 55 00 0E 01 0E 01 8C 00 8C 00 E8 03 B6 03 12 00 12 00 40 01 40 01 06 02 06 02 22 8F FF FF FF
+                if (index >= 31) { 
+                    uint16_t p2p_x = buffer[2] | (buffer[3] << 8);
+                    uint16_t p2p_y = buffer[4] | (buffer[5] << 8);
+                    uint16_t crank_x = buffer[6] | (buffer[7] << 8);
+                    uint16_t crank_y = buffer[8] | (buffer[9] << 8);
+                    uint16_t rod_x = buffer[10] | (buffer[11] << 8);
+                    uint16_t rod_y = buffer[12] | (buffer[13] << 8);
+                    uint16_t step_x = buffer[14] | (buffer[15] << 8);
+                    uint16_t step_y = buffer[16] | (buffer[17] << 8);
+                    uint16_t micro_x = buffer[18] | (buffer[19] << 8);
+                    uint16_t micro_y = buffer[20] | (buffer[21] << 8);
+                    uint16_t gear_x = buffer[22] | (buffer[23] << 8);
+                    uint16_t gear_y = buffer[24] | (buffer[25] << 8);
+                    uint16_t recv_crc = buffer[26] | (buffer[27] << 8);
+
+                    uint8_t payload[24];
+                    for(int j = 0; j < 24; j++) {
+                        payload[j] = buffer[2 + j];
+                    }
+                    uint16_t calc_crc = nextion_crc16_modbus(payload, sizeof(payload));
+
+                    if (recv_crc == calc_crc) {
+                        ESP_LOGI("NEXTION", "✅ CRC OK - New physical configuration received!");
+                        
+                        // Update global structs
+                        kinematics_init_axis(&table_config_x.axis, p2p_x / 10.0f, crank_x / 10.0f, rod_x / 10.0f);
+                        kinematics_init_stepper(&table_config_x.stepper, step_x / 10.0f, gear_x / 100.0f, micro_x / 10);
+                        
+                        kinematics_init_axis(&table_config_y.axis, p2p_y / 10.0f, crank_y / 10.0f, rod_y / 10.0f);
+                        kinematics_init_stepper(&table_config_y.stepper, step_y / 10.0f, gear_y / 100.0f, micro_y / 10);
+                        
+                        // Save to NVS
+                        config_manager_save('x', &table_config_x);
+                        config_manager_save('y', &table_config_y);
+                        
+                        ESP_LOGI("NEXTION", "New configuration saved to flash memory (NVS)!");
+                        sendAckToNextion(160); // ACK: OK
+                        vTaskDelay(pdMS_TO_TICKS(15)); // Small pause to ensure ACK is sent before resetting the flag
+                        nextion_send_command("Param0.val=0"); // Reset control flag on HMI
+                    } else {
+                        ESP_LOGW("NEXTION", "❌ Invalid CRC (expected 0x%04X, received 0x%04X)", calc_crc, recv_crc);
+                        sendAckToNextion(161); // ACK ERROR
+                    }
                 }
             }
             // End Shaking Table Profiles Data Packet (0x55) -------------------------------------------------------------
@@ -708,7 +805,7 @@ void rxFromNextion(const uint8_t *data, int len)
             index = 0; // reset buffer
         }
 
-        // Protege de overflow
+        // Protect from overflow
         if (index >= NEXTION_MAX_LEN)
             index = 0;
     }

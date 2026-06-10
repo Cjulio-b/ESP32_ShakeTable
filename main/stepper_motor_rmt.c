@@ -29,8 +29,8 @@
 
 static const char *TAG = "DRV8825_RMT";
 
-// Usar 'volatile' avisa o compilador que esta variável pode ser alterada
-// a qualquer momento por outra Task (neste caso, a rx_task do UART/Nextion)
+// Using 'volatile' tells the compiler that this variable can be changed
+// at any time by another Task (in this case, the UART/Nextion rx_task)
 volatile int8_t nextion_profile = 0; // 0 significa repouso absoluto (A aguardar comando do HMI)
 volatile bool motor1_busy = false;
 volatile bool motor2_busy = false;
@@ -161,9 +161,9 @@ esp_err_t stepper_rmt_run_steps(stepper_rmt_context_t *ctx, uint32_t uniform_spe
     gpio_set_level(ctx->gpio_en, STEP_MOTOR_ENABLE_LEVEL);
     vTaskDelay(pdMS_TO_TICKS(100)); // Allow time for coil current to stabilize
 
-    // Calcular a velocidade de homing com base nas caracteristicas mecanicas (ex: 0.25 voltas/segundo)
-    float homing_rev_per_sec = 0.25f; // Podes aumentar para 0.5f se achares muito lento
-    uint32_t homing_speed_hz = (uint32_t)(table_config->stepper_x.microsteps_per_rev * homing_rev_per_sec);
+    // Calculate homing speed based on mechanical characteristics (e.g., 0.25 revs/second)
+    float homing_rev_per_sec = 0.25f; // You can increase this to 0.5f if you find it too slow
+    uint32_t homing_speed_hz = (uint32_t)(table_config->stepper.microsteps_per_rev * homing_rev_per_sec);
     
     uint32_t chunk_size = (uint32_t)(homing_speed_hz * 0.05f); // Verifica os fins de curso a cada 50 milissegundos
     if (chunk_size < 20) chunk_size = 20;
@@ -198,9 +198,9 @@ esp_err_t stepper_rmt_run_steps(stepper_rmt_context_t *ctx, uint32_t uniform_spe
     ESP_LOGI(TAG, "HOMING: Left limit hit (-180 deg)! Total measured steps = %lu", total_steps);
     
     // --- KINEMATICS VERIFICATION (End-to-End) ---
-    float total_angle = kinematics_calc_angular_position(&table_config->stepper_x, total_steps);
+    float total_angle = kinematics_calc_angular_position(&table_config->stepper, total_steps);
     ESP_LOGI(TAG, "[Homing Verification] End-to-end movement:");
-    ESP_LOGI(TAG, "  -> Measured Steps: %lu (Theoretical for 180 deg = %lu)", total_steps, table_config->stepper_x.microsteps_per_rev / 2);
+    ESP_LOGI(TAG, "  -> Measured Steps: %lu (Theoretical for 180 deg = %lu)", total_steps, table_config->stepper.microsteps_per_rev / 2);
     ESP_LOGI(TAG, "  -> Calculated Travelled Angle: %.2f degrees", total_angle);
     
     vTaskDelay(pdMS_TO_TICKS(500));
@@ -216,8 +216,8 @@ esp_err_t stepper_rmt_run_steps(stepper_rmt_context_t *ctx, uint32_t uniform_spe
     ESP_LOGI(TAG, "HOMING: Calibration Finished. Motor is at Center (0 deg).");
 
     // --- KINEMATICS VERIFICATION (Center) ---
-    float center_angle = kinematics_calc_angular_position(&table_config->stepper_x, center_steps);
-    float real_center_pos = kinematics_calc_linear_position_relative_90(&table_config->axis_x, center_angle);
+    float center_angle = kinematics_calc_angular_position(&table_config->stepper, center_steps);
+    float real_center_pos = kinematics_calc_linear_position_relative_90(&table_config->axis, center_angle);
     ESP_LOGI(TAG, "[Homing Verification] Center Position (intermediate dead center):");
     ESP_LOGI(TAG, "  -> Motor Angle: %.2f degrees (Expected ~90.00 degrees)", center_angle);
     ESP_LOGI(TAG, "  -> Real Position (Relative to 90 deg): %.2f mm (Expected ~0.00 mm)", real_center_pos);
@@ -234,8 +234,8 @@ esp_err_t stepper_rmt_run_sine_profile(stepper_rmt_context_t *ctx, float target_
 
     // Prevenir divisões por zero ou crash no driver RMT
     if (freq_hz < 0.1f) freq_hz = 0.1f;
-
-    float max_p2p = table_config->axis_x.peak_to_peak_disp_mm; // Typical max displacement (e.g., 33.0mm)
+    
+    float max_p2p = table_config->axis.peak_to_peak_disp_mm; // Typical max displacement (e.g., 33.0mm)
     
     // Safety check: clamp requested displacement to the physical table maximum
     if (target_p2p_mm > max_p2p) {
@@ -255,7 +255,7 @@ esp_err_t stepper_rmt_run_sine_profile(stepper_rmt_context_t *ctx, float target_
     // For max P2P (~33mm), the crank-slider mechanism translates continuous rotation into full linear strokes.
     if (target_p2p_mm >= max_p2p - 0.1f) {
         ESP_LOGI(TAG, "Continuous Rotation Mode (Crank-slider naturally actuates the full stroke)");
-        uint32_t speed_hz = (uint32_t)(table_config->stepper_x.microsteps_per_rev * freq_hz);
+        uint32_t speed_hz = (uint32_t)(table_config->stepper.microsteps_per_rev * freq_hz);
         uint32_t chunk_steps = speed_hz / 10; // Fragmentos de movimento (aprox 100ms) para podermos parar a qualquer instante
         if (chunk_steps == 0) chunk_steps = 1;
         
@@ -269,14 +269,14 @@ esp_err_t stepper_rmt_run_sine_profile(stepper_rmt_context_t *ctx, float target_
     else {
         ESP_LOGI(TAG, "Partial Oscillation Mode (Motor reverses direction to achieve %.2fmm p2p)", target_p2p_mm);
         
-        float r = table_config->axis_x.max_amplitude_mm; // Crank radius (half of maximum table displacement)
+        float r = table_config->axis.max_amplitude_mm; // Crank radius (half of maximum table displacement)
         float A = target_p2p_mm / 2.0f;                  // Desired peak amplitude from the center (e.g., 5mm)
         
         // Calculate required mechanical angle from the center (in radians) using simple inverse kinematics
         float theta_rad = asinf(A / r);
         
         // Exact motor steps required to reach the peak of this oscillation amplitude
-        float s_amp = (theta_rad / (2.0f * PI_MATH)) * table_config->stepper_x.microsteps_per_rev;
+        float s_amp = (theta_rad / (2.0f * PI_MATH)) * table_config->stepper.microsteps_per_rev;
 
         // Velocity profile generation for 1/4 of the wave cycle (0 to peak)
         #define Q_SEGMENTS 20
@@ -314,13 +314,13 @@ esp_err_t stepper_rmt_run_sine_profile(stepper_rmt_context_t *ctx, float target_
 
         // Execute the profile quarter-by-quarter
         while (1) {
-            // Verificação de tempo absoluta sugerida por ti (corte exato no milissegundo)
+            // Absolute time check (exact millisecond cutoff)
             if (esp_timer_get_time() - start_time_us >= duration_us) {
-                ESP_LOGI(TAG, "Tempo limite exato atingido (%.2fs)! Ensaio finalizado.", duration_s);
+                ESP_LOGI(TAG, "Exact time limit reached (%.2fs)! Test finished.", duration_s);
                 break;
             }
 
-            // Verifica se o ensaio foi abortado (Botão STOP no Nextion envia nextion_profile = 0)
+            // Check if the test was aborted (STOP button on Nextion sends nextion_profile = 0)
             if (nextion_profile == 0) {
                 ESP_LOGW(TAG, "Sine Profile abortado a meio do ensaio!");
                 break;
@@ -359,7 +359,7 @@ esp_err_t stepper_rmt_run_realtime_sine_profile(stepper_rmt_context_t *ctx, floa
 {
     if (!ctx || !table_config || !adc_handle) return ESP_ERR_INVALID_ARG;
 
-    float max_p2p = table_config->axis_x.peak_to_peak_disp_mm;
+    float max_p2p = table_config->axis.peak_to_peak_disp_mm;
     if (target_p2p_mm > max_p2p) target_p2p_mm = max_p2p;
 
     ESP_LOGI(TAG, "Real-Time Seismic Profile: P2P=%.2fmm, Dur=%.2fs, Freq=%.2f to %.2f Hz", target_p2p_mm, duration_s, min_hz, max_hz);
@@ -378,31 +378,31 @@ esp_err_t stepper_rmt_run_realtime_sine_profile(stepper_rmt_context_t *ctx, floa
             int adc_val = 0;
             adc_oneshot_read(adc_handle, adc_chan, &adc_val);
             
-            // Mapeia ADC (0-4095) para a gama de Frequências configurada
+            // Map ADC (0-4095) to the configured Frequency range
             float freq_hz = min_hz + ((float)adc_val / 4095.0f) * (max_hz - min_hz);
             
             if (freq_hz < 0.1f) freq_hz = 0.1f; // Evita divisões por zero e previne crash no RMT
-            uint32_t speed_hz = (uint32_t)(table_config->stepper_x.microsteps_per_rev * freq_hz);
+            uint32_t speed_hz = (uint32_t)(table_config->stepper.microsteps_per_rev * freq_hz);
             
             // Transmite um pequeno bloco (aprox 100ms) à velocidade atual antes de ler novamente
             uint32_t chunk_steps = (uint32_t)(speed_hz * 0.1f);
-            if(chunk_steps == 0) chunk_steps = 1;
+            if (chunk_steps == 0) chunk_steps = 1;
 
             stepper_rmt_run_steps(ctx, speed_hz, chunk_steps, 0, 0, true);
         }
     } 
     // CASE 2: Oscilação Parcial
     else {
-        float r = table_config->axis_x.max_amplitude_mm;
+        float r = table_config->axis.max_amplitude_mm;
         float A = target_p2p_mm / 2.0f;
         float theta_rad = asinf(A / r);
-        float s_amp = (theta_rad / (2.0f * PI_MATH)) * table_config->stepper_x.microsteps_per_rev;
+        float s_amp = (theta_rad / (2.0f * PI_MATH)) * table_config->stepper.microsteps_per_rev;
 
         #define Q_SEGMENTS 20
         uint32_t q_steps[Q_SEGMENTS];
         uint32_t q_speeds[Q_SEGMENTS];
 
-        float accum = 0.0f; // Mantido fora do loop para não perder precisão inter-quartos
+        float accum = 0.0f; // Kept outside the loop to avoid losing inter-quarter precision
         int q = 0;
 
         while (1) {
@@ -464,7 +464,7 @@ esp_err_t stepper_rmt_run_trapezoidal_freq_profile(stepper_rmt_context_t *ctx, f
 {
     if (!ctx || !table_config) return ESP_ERR_INVALID_ARG;
 
-    float max_p2p = table_config->axis_x.peak_to_peak_disp_mm;
+    float max_p2p = table_config->axis.peak_to_peak_disp_mm;
     if (target_p2p_mm > max_p2p) target_p2p_mm = max_p2p;
 
     float total_time_s = accel_time_s + cruise_time_s + decel_time_s;
@@ -500,7 +500,7 @@ esp_err_t stepper_rmt_run_trapezoidal_freq_profile(stepper_rmt_context_t *ctx, f
             }
             
             if (freq_hz < 0.1f) freq_hz = 0.1f; // Prevenir divisão por 0 e limites RMT
-            uint32_t speed_hz = (uint32_t)(table_config->stepper_x.microsteps_per_rev * freq_hz);
+            uint32_t speed_hz = (uint32_t)(table_config->stepper.microsteps_per_rev * freq_hz);
             uint32_t chunk_steps = (uint32_t)(speed_hz * 0.1f);
             if(chunk_steps == 0) chunk_steps = 1;
             stepper_rmt_run_steps(ctx, speed_hz, chunk_steps, 0, 0, true);
@@ -508,9 +508,9 @@ esp_err_t stepper_rmt_run_trapezoidal_freq_profile(stepper_rmt_context_t *ctx, f
     } 
     // Oscilação Parcial
     else {
-        float r = table_config->axis_x.max_amplitude_mm;
+        float r = table_config->axis.max_amplitude_mm;
         float A = target_p2p_mm / 2.0f;
-        float s_amp = (asinf(A / r) / (2.0f * PI_MATH)) * table_config->stepper_x.microsteps_per_rev;
+        float s_amp = (asinf(A / r) / (2.0f * PI_MATH)) * table_config->stepper.microsteps_per_rev;
 
         #define Q_SEGMENTS 20
         uint32_t q_steps[Q_SEGMENTS];
@@ -570,7 +570,7 @@ esp_err_t stepper_rmt_run_multistep_freq_profile(stepper_rmt_context_t *ctx, flo
 {
     if (!ctx || !table_config || !freqs_hz || !times_s || num_stages == 0) return ESP_ERR_INVALID_ARG;
 
-    float max_p2p = table_config->axis_x.peak_to_peak_disp_mm;
+    float max_p2p = table_config->axis.peak_to_peak_disp_mm;
     if (target_p2p_mm > max_p2p) target_p2p_mm = max_p2p;
 
     ESP_LOGI(TAG, "Multi-Step Freq Profile: P2P=%.2fmm, Stages=%d, TotalDur=%.2fs, Blend=%.2fs",
@@ -616,7 +616,7 @@ esp_err_t stepper_rmt_run_multistep_freq_profile(stepper_rmt_context_t *ctx, flo
             if (freq_hz < 0.1f) freq_hz = 0.1f; // Safety limit
             current_freq = freq_hz;
 
-            uint32_t speed_hz = (uint32_t)(table_config->stepper_x.microsteps_per_rev * freq_hz);
+            uint32_t speed_hz = (uint32_t)(table_config->stepper.microsteps_per_rev * freq_hz);
             uint32_t chunk_steps = (uint32_t)(speed_hz * 0.1f);
             if (chunk_steps == 0) chunk_steps = 1;
             stepper_rmt_run_steps(ctx, speed_hz, chunk_steps, 0, 0, true);
@@ -624,9 +624,9 @@ esp_err_t stepper_rmt_run_multistep_freq_profile(stepper_rmt_context_t *ctx, flo
     } 
     // CASE 2: Partial Oscillation
     else {
-        float r = table_config->axis_x.max_amplitude_mm;
+        float r = table_config->axis.max_amplitude_mm;
         float A = target_p2p_mm / 2.0f;
-        float s_amp = (asinf(A / r) / (2.0f * PI_MATH)) * table_config->stepper_x.microsteps_per_rev;
+        float s_amp = (asinf(A / r) / (2.0f * PI_MATH)) * table_config->stepper.microsteps_per_rev;
 
         #define Q_SEGMENTS 20
         uint32_t q_steps[Q_SEGMENTS];
@@ -692,7 +692,7 @@ esp_err_t stepper_rmt_run_sweep_profile(stepper_rmt_context_t *ctx, float target
 {
     if (!ctx || !table_config || start_freq_hz <= 0 || end_freq_hz <= 0 || duration_s <= 0) return ESP_ERR_INVALID_ARG;
 
-    float max_p2p = table_config->axis_x.peak_to_peak_disp_mm;
+    float max_p2p = table_config->axis.peak_to_peak_disp_mm;
     if (target_p2p_mm > max_p2p) target_p2p_mm = max_p2p;
 
     ESP_LOGI(TAG, "Logarithmic Sweep Profile: P2P=%.2fmm, Freq=%.2f->%.2fHz, Dur=%.2fs, Bidir=%d",
@@ -724,7 +724,7 @@ esp_err_t stepper_rmt_run_sweep_profile(stepper_rmt_context_t *ctx, float target
             float freq_hz = start_freq_hz * powf(end_freq_hz / start_freq_hz, norm_t);
             
             if (freq_hz < 0.1f) freq_hz = 0.1f;
-            uint32_t speed_hz = (uint32_t)(table_config->stepper_x.microsteps_per_rev * freq_hz);
+            uint32_t speed_hz = (uint32_t)(table_config->stepper.microsteps_per_rev * freq_hz);
             uint32_t chunk_steps = (uint32_t)(speed_hz * 0.1f);
             if(chunk_steps == 0) chunk_steps = 1;
             stepper_rmt_run_steps(ctx, speed_hz, chunk_steps, 0, 0, true);
@@ -732,9 +732,9 @@ esp_err_t stepper_rmt_run_sweep_profile(stepper_rmt_context_t *ctx, float target
     } 
     // CASE 2: Partial Oscillation
     else {
-        float r = table_config->axis_x.max_amplitude_mm;
+        float r = table_config->axis.max_amplitude_mm;
         float A = target_p2p_mm / 2.0f;
-        float s_amp = (asinf(A / r) / (2.0f * PI_MATH)) * table_config->stepper_x.microsteps_per_rev;
+        float s_amp = (asinf(A / r) / (2.0f * PI_MATH)) * table_config->stepper.microsteps_per_rev;
 
         #define Q_SEGMENTS 20
         uint32_t q_steps[Q_SEGMENTS];
@@ -786,7 +786,7 @@ esp_err_t stepper_rmt_run_sweep_profile(stepper_rmt_context_t *ctx, float target
     return ESP_OK;
 }
 
-// =========================================================================
+// ========================================================================
 // FUNÇÕES AUXILIARES PARA O CASE 6 (LEITURA DE FICHEIROS SÍSMICOS)
 // =========================================================================
 
@@ -826,19 +826,19 @@ esp_err_t stepper_rmt_run_file_profile(stepper_rmt_context_t *ctx, const char* f
     fread(&dt, sizeof(float), 1, f);
 
     if (num_points == 0 || dt <= 0.0f) {
-        ESP_LOGE(TAG, "Formato invalido ou dados vazios. Pontos: %lu, dt: %.4f", num_points, dt);
+        ESP_LOGE(TAG, "Invalid format or empty data. Points: %lu, dt: %.4f", num_points, dt);
         fclose(f);
         return ESP_FAIL;
     }
 
-    ESP_LOGI(TAG, "A Iniciar Perfil Sismico: %lu pontos, dt=%.4fs, tempo total=%.2fs", num_points, dt, num_points * dt);
+    ESP_LOGI(TAG, "Starting Seismic Profile: %lu points, dt=%.4fs, total time=%.2fs", num_points, dt, num_points * dt);
 
     gpio_set_level(ctx->gpio_en, STEP_MOTOR_ENABLE_LEVEL);
     vTaskDelay(pdMS_TO_TICKS(50));
 
     // O motor mecanicamente inicia no centro após o Homing (correspondente a 90 graus nas nossas contas)
     float current_angle = 90.0f;
-    int32_t current_step = (int32_t)roundf((current_angle / 360.0f) * table_config->stepper_x.microsteps_per_rev);
+    int32_t current_step = (int32_t)roundf((current_angle / 360.0f) * table_config->stepper.microsteps_per_rev);
     
     rmt_transmit_config_t tx_config = { .loop_count = 0 };
     int64_t start_time_us = esp_timer_get_time();
@@ -852,20 +852,20 @@ esp_err_t stepper_rmt_run_file_profile(stepper_rmt_context_t *ctx, const char* f
         uint32_t to_read = (points_left > CHUNK_SIZE) ? CHUNK_SIZE : points_left;
         size_t read_count = fread(target_pos_chunk, sizeof(float), to_read, f);
         
-        if (read_count == 0) { ESP_LOGW(TAG, "Fim do ficheiro inesperado!"); break; }
+        if (read_count == 0) { ESP_LOGW(TAG, "Unexpected end of file!"); break; }
         
         for (uint32_t i = 0; i < read_count; i++) {
             float target_pos_mm = target_pos_chunk[i];
             
-            // 1. Cinemática Inversa
-            float target_angle = kinematics_calc_inverse_position_relative_90(&table_config->axis_x, target_pos_mm);
-            int32_t target_step = (int32_t)roundf((target_angle / 360.0f) * table_config->stepper_x.microsteps_per_rev);
+            // 1. Inverse Kinematics
+            float target_angle = kinematics_calc_inverse_position_relative_90(&table_config->axis, target_pos_mm);
+            int32_t target_step = (int32_t)roundf((target_angle / 360.0f) * table_config->stepper.microsteps_per_rev);
             int32_t delta_steps = target_step - current_step;
 
-            // Debug: Imprimir a cada 10 pontos (0.1s) para não saturar a UART e afetar o timing do RMT
+            // Debug: Print every 10 points (0.1s) to avoid saturating UART and affecting RMT timing
             if (point_index % 10 == 0) {
                 float current_time_s = point_index * dt;
-                ESP_LOGI(TAG, "Tempo: %5.3fs | Pos: %7.4f mm | Angulo: %6.2f deg", current_time_s, target_pos_mm, target_angle);
+                ESP_LOGI(TAG, "Time: %5.3fs | Pos: %7.4f mm | Angle: %6.2f deg", current_time_s, target_pos_mm, target_angle);
             }
 
             // 2. Executar Movimento
@@ -875,14 +875,14 @@ esp_err_t stepper_rmt_run_file_profile(stepper_rmt_context_t *ctx, const char* f
                 
                 uint32_t steps_to_move = abs(delta_steps);
                 uint32_t freq_hz = (uint32_t)roundf((float)steps_to_move / dt);
-                if (freq_hz < 10) freq_hz = 10; // Frequência mínima de segurança do RMT
+                if (freq_hz < 10) freq_hz = 10; // RMT safety minimum frequency
 
                 for (uint32_t s = 0; s < steps_to_move; s++) {
                     rmt_transmit(ctx->motor_chan, ctx->uniform_motor_encoder, &freq_hz, sizeof(freq_hz), &tx_config);
                 }
                 current_step = target_step;
             } else {
-                // Se o sismo tem uma pausa (0 deslocamento), sincronizamos o relógio no microsegundo exato
+                // If the earthquake has a pause (0 displacement), we synchronize the clock to the exact microsecond
                 rmt_tx_wait_all_done(ctx->motor_chan, -1);
                 int64_t target_time_us = start_time_us + (int64_t)((point_index + 1) * dt * 1000000.0f);
                 int64_t delay_us = target_time_us - esp_timer_get_time();
@@ -894,7 +894,7 @@ esp_err_t stepper_rmt_run_file_profile(stepper_rmt_context_t *ctx, const char* f
             
             point_index++;
             
-            // Quebra de segurança (Paragem de emergência por botão ou Nextion)
+            // Safety break (Emergency stop by button or Nextion)
             if (nextion_profile != 6) { points_left = 0; break; }
         }
         points_left -= read_count;
@@ -903,7 +903,7 @@ esp_err_t stepper_rmt_run_file_profile(stepper_rmt_context_t *ctx, const char* f
     rmt_tx_wait_all_done(ctx->motor_chan, -1);
     gpio_set_level(ctx->gpio_en, !STEP_MOTOR_ENABLE_LEVEL);
     fclose(f);
-    ESP_LOGI(TAG, "Perfil Sismico do ficheiro concluido com sucesso!");
+    ESP_LOGI(TAG, "Seismic profile from file completed successfully!");
     
     return ESP_OK;
 }
@@ -915,31 +915,26 @@ void stepper_rmt_task_1(void *arg)
 {
     // Initialize Motor 1 with the configured pins
     stepper_rmt_context_t *motor1 = stepper_rmt_init(5, 32, 4);
-    
-    shake_table_config_t my_table;
-    kinematics_init_axis(&my_table.axis_x, 27.0f, 100.0f); // 27mm peak-to-peak displacement, 100mm rod length
-    float gear_ratio = 5.18f;
-    kinematics_init_stepper(&my_table.stepper_x, 1.8f / gear_ratio, 32); // 1.8 degree step, 32 microsteps
 
-    // Configuração do ADC1 (Vamos usar o GPIO 34 = ADC1_CHANNEL_6)
+    // ADC1 Configuration (We will use GPIO 34 = ADC1_CHANNEL_6)
     if (s_adc1_handle == NULL) {
         adc_oneshot_unit_init_cfg_t init_config1 = { .unit_id = ADC_UNIT_1 };
         ESP_ERROR_CHECK(adc_oneshot_new_unit(&init_config1, &s_adc1_handle));
     }
 
     adc_oneshot_chan_cfg_t adc_cfg = { .bitwidth = ADC_BITWIDTH_DEFAULT, .atten = ADC_ATTEN_DB_12 };
-    // Recomendado: Usar GPIO34 em vez do GPIO12
+    // Recommended: Use GPIO34 instead of GPIO12
     ESP_ERROR_CHECK(adc_oneshot_config_channel(s_adc1_handle, ADC_CHANNEL_6, &adc_cfg));
 
     // Execute Homing calibration on startup
 /*     if (motor1) {
-        stepper_rmt_homing(motor1, 14, 12, &my_table);
+        stepper_rmt_homing(motor1, 14, 12, &table_config_x);
     }
  */
     while (1) {
         // LARGER STEPPER
         uint8_t current_profile = nextion_profile;
-        // Fallback: Se premir o botão físico sem ensaio ativo, executa o Case 6 por defeito
+        // Fallback: If the physical button is pressed without an active test, execute Case 6 by default
         // if (gpio_get_level(GPIO_NUM_14) == 0) {
         //     current_profile = (nextion_profile == 0) ? 6 : nextion_profile; 
         // }
@@ -955,26 +950,26 @@ void stepper_rmt_task_1(void *arg)
                     // stepper_rmt_run_sine_profile(motor1, 32.0f, 2.0f, 5.0f, &my_table); // Original rígido
                     
                     motor1_ready = false;
-                    ESP_LOGI(TAG, "Motor 1: A executar Auto-Homing preparatorio...");
-                    stepper_rmt_homing(motor1, 14, 12, &my_table);
+                    ESP_LOGI(TAG, "Motor 1: Performing preparatory Auto-Homing...");
+                    stepper_rmt_homing(motor1, 14, 12, &table_config_x);
                     motor1_ready = true;
 
                     if (nextion_target_disp_x > 0.0f && nextion_target_freq_x > 0.0f && nextion_target_time_s > 0.0f) {
                         
-                        // Barreira de Sincronização: aguarda que o Motor 2 também acabe o seu Homing
+                        // Synchronization Barrier: wait for Motor 2 to also finish its Homing
                         while (!motor2_ready && nextion_profile == 1) {
                             vTaskDelay(pdMS_TO_TICKS(10));
                         }
                         
-                        // Após ambos acabarem, arrancam em simultâneo
+                        // After both are finished, they start simultaneously
                         if (nextion_profile == 1) {
-                            sendAckToNextion(163); // Envia ACK START MOTION apenas após o Homing acabar
-                            stepper_rmt_run_sine_profile(motor1, nextion_target_disp_x, nextion_target_freq_x, nextion_target_time_s, &my_table);
+                            sendAckToNextion(163); // Send ACK START MOTION only after Homing is finished
+                            stepper_rmt_run_sine_profile(motor1, nextion_target_disp_x, nextion_target_freq_x, nextion_target_time_s, &table_config_x);
                         }
                     } else {
-                        ESP_LOGI(TAG, "Motor 1 parado (Deslocamento ou Freq nulos). A manter sincronia...");
+                        ESP_LOGI(TAG, "Motor 1 stopped (Displacement or Freq are null). Maintaining sync...");
                         
-                        // Barreira de Sincronização: se Motor 2 não mexe, tem de aguardar o Homing do Motor 1!
+                        // Synchronization Barrier: if Motor 2 is not moving, it must wait for Motor 1's Homing!
                         while (!motor2_ready && nextion_profile == 1) {
                             vTaskDelay(pdMS_TO_TICKS(10));
                         }
@@ -986,10 +981,10 @@ void stepper_rmt_task_1(void *arg)
                         int64_t start_idle_us = esp_timer_get_time();
                         int64_t duration_idle_us = (int64_t)(nextion_target_time_s * 1000000.0f);
                         while ((esp_timer_get_time() - start_idle_us) < duration_idle_us) {
-                            if (nextion_profile == 0) break; // Aborta se o utilizador premir STOP
+                            if (nextion_profile == 0) break; // Abort if the user presses STOP
                             vTaskDelay(pdMS_TO_TICKS(50));
                         }
-                        // Desliga o driver no final da espera para não aquecer infinitamente
+                        // Disable the driver at the end of the wait to prevent infinite heating
                         gpio_set_level(motor1->gpio_en, !STEP_MOTOR_ENABLE_LEVEL);                        
                     }
                     break;
@@ -1002,23 +997,23 @@ void stepper_rmt_task_1(void *arg)
                     //stepper_rmt_run_multistep_freq_profile(motor1, 16.0f, freqs, times, 4, 60.0f, 0.5f, &my_table);
 
                     motor1_ready = false;
-                    ESP_LOGI(TAG, "Motor 1: A executar Auto-Homing preparatorio...");
-                    stepper_rmt_homing(motor1, 14, 12, &my_table);
+                    ESP_LOGI(TAG, "Motor 1: Performing preparatory Auto-Homing...");
+                    stepper_rmt_homing(motor1, 14, 12, &table_config_x);
                     motor1_ready = true;
 
                     if (nextion_target_disp_x > 0.0f && nextion_target_time_s > 0.0f) {
-                        // Barreira de Sincronização: aguarda que o Motor 2 também acabe o seu Homing
+                        // Synchronization Barrier: wait for Motor 2 to also finish its Homing
                         while (!motor2_ready && nextion_profile == 2) {
                             vTaskDelay(pdMS_TO_TICKS(10));
                         }
                         
-                        // Após ambos acabarem, arrancam em simultâneo
+                        // After both are finished, they start simultaneously
                         if (nextion_profile == 2) {
-                            sendAckToNextion(163); // Envia ACK START MOTION apenas após o Homing acabar
-                            stepper_rmt_run_multistep_freq_profile(motor1, nextion_target_disp_x, nextion_multistep_freq_x, nextion_multistep_time_x, 4, nextion_target_time_s, 0.5f, &my_table);
+                            sendAckToNextion(163); // Send ACK START MOTION only after Homing is finished
+                            stepper_rmt_run_multistep_freq_profile(motor1, nextion_target_disp_x, nextion_multistep_freq_x, nextion_multistep_time_x, 4, nextion_target_time_s, 0.5f, &table_config_x);
                         }
                     } else {
-                        ESP_LOGI(TAG, "Motor 1 parado (Deslocamento nulo). A manter sincronia...");
+                        ESP_LOGI(TAG, "Motor 1 stopped (Displacement is null). Maintaining sync...");
                         while (!motor2_ready && nextion_profile == 2) {
                             vTaskDelay(pdMS_TO_TICKS(10));
                         }
@@ -1041,23 +1036,23 @@ void stepper_rmt_task_1(void *arg)
                     //stepper_rmt_run_trapezoidal_freq_profile(motor1, 16.0f, 0.5f, 3.0f, 0.5f, 3.0f, 5.0f, 3.0f, &my_table);                    
                     
                     motor1_ready = false;
-                    ESP_LOGI(TAG, "Motor 1: A executar Auto-Homing preparatorio...");
-                    stepper_rmt_homing(motor1, 14, 12, &my_table);
+                    ESP_LOGI(TAG, "Motor 1: Performing preparatory Auto-Homing...");
+                    stepper_rmt_homing(motor1, 14, 12, &table_config_x);
                     motor1_ready = true;
 
                     if (nextion_target_disp_x > 0.0f) {
-                        // Barreira de Sincronização: aguarda que o Motor 2 também acabe o seu Homing
+                        // Synchronization Barrier: wait for Motor 2 to also finish its Homing
                         while (!motor2_ready && nextion_profile == 3) {
                             vTaskDelay(pdMS_TO_TICKS(10));
                         }
                         
-                        // Após ambos acabarem, arrancam em simultâneo
+                        // After both are finished, they start simultaneously
                         if (nextion_profile == 3) {
-                            sendAckToNextion(163); // Envia ACK START MOTION
-                            stepper_rmt_run_trapezoidal_freq_profile(motor1, nextion_target_disp_x, nextion_trapz_start_freq_x, nextion_trapz_cruise_freq_x, nextion_trapz_end_freq_x, nextion_trapz_accel_time_x, nextion_trapz_cruise_time_x, nextion_trapz_decel_time_x, &my_table);
+                            sendAckToNextion(163); // Send ACK START MOTION
+                            stepper_rmt_run_trapezoidal_freq_profile(motor1, nextion_target_disp_x, nextion_trapz_start_freq_x, nextion_trapz_cruise_freq_x, nextion_trapz_end_freq_x, nextion_trapz_accel_time_x, nextion_trapz_cruise_time_x, nextion_trapz_decel_time_x, &table_config_x);
                         }
                     } else {
-                        ESP_LOGI(TAG, "Motor 1 parado (Deslocamento nulo). A manter sincronia...");
+                        ESP_LOGI(TAG, "Motor 1 stopped (Displacement is null). Maintaining sync...");
                         while (!motor2_ready && nextion_profile == 3) {
                             vTaskDelay(pdMS_TO_TICKS(10));
                         }
@@ -1081,8 +1076,8 @@ void stepper_rmt_task_1(void *arg)
                     //stepper_rmt_run_realtime_sine_profile(motor1, 16.0f, 10.0f, s_adc1_handle, ADC_CHANNEL_6, 0.5f, 5.0f, &my_table);
                     
                     motor1_ready = false;
-                    ESP_LOGI(TAG, "Motor 1: A executar Auto-Homing preparatorio...");
-                    stepper_rmt_homing(motor1, 14, 12, &my_table);
+                    ESP_LOGI(TAG, "Motor 1: Performing preparatory Auto-Homing...");
+                    stepper_rmt_homing(motor1, 14, 12, &table_config_x);
                     motor1_ready = true;
 
                     if (nextion_target_disp_x > 0.0f && nextion_target_time_s > 0.0f) {
@@ -1091,10 +1086,10 @@ void stepper_rmt_task_1(void *arg)
                         }
                         if (nextion_profile == 4) {
                             sendAckToNextion(163);
-                            stepper_rmt_run_realtime_sine_profile(motor1, nextion_target_disp_x, nextion_target_time_s, s_adc1_handle, ADC_CHANNEL_6, nextion_rt_min_freq_x, nextion_rt_max_freq_x, &my_table);
+                            stepper_rmt_run_realtime_sine_profile(motor1, nextion_target_disp_x, nextion_target_time_s, s_adc1_handle, ADC_CHANNEL_6, nextion_rt_min_freq_x, nextion_rt_max_freq_x, &table_config_x);
                         }
                     } else {
-                        ESP_LOGI(TAG, "Motor 1 parado (Deslocamento nulo). A manter sincronia...");
+                        ESP_LOGI(TAG, "Motor 1 stopped (Displacement is null). Maintaining sync...");
                         while (!motor2_ready && nextion_profile == 4) {
                             vTaskDelay(pdMS_TO_TICKS(10));
                         }
@@ -1111,8 +1106,8 @@ void stepper_rmt_task_1(void *arg)
                 case 5:
                     // Sweep / Chirp Profile (IEC/ISO Standard Logarithmic Sweep)
                     motor1_ready = false;
-                    ESP_LOGI(TAG, "Motor 1: A executar Auto-Homing preparatorio...");
-                    stepper_rmt_homing(motor1, 14, 12, &my_table);
+                    ESP_LOGI(TAG, "Motor 1: Performing preparatory Auto-Homing...");
+                    stepper_rmt_homing(motor1, 14, 12, &table_config_x);
                     motor1_ready = true;
 
                     if (nextion_target_disp_x > 0.0f && nextion_target_time_s > 0.0f) {
@@ -1121,10 +1116,10 @@ void stepper_rmt_task_1(void *arg)
                         }
                         if (nextion_profile == 5) {
                             sendAckToNextion(163);
-                            stepper_rmt_run_sweep_profile(motor1, nextion_target_disp_x, nextion_sweep_min_freq_x, nextion_sweep_max_freq_x, nextion_target_time_s, nextion_sweep_isBid_x, &my_table);
+                            stepper_rmt_run_sweep_profile(motor1, nextion_target_disp_x, nextion_sweep_min_freq_x, nextion_sweep_max_freq_x, nextion_target_time_s, nextion_sweep_isBid_x, &table_config_x);
                         }
                     } else {
-                        ESP_LOGI(TAG, "Motor 1 parado (Deslocamento nulo). A manter sincronia...");
+                        ESP_LOGI(TAG, "Motor 1 stopped (Displacement is null). Maintaining sync...");
                         while (!motor2_ready && nextion_profile == 5) {
                             vTaskDelay(pdMS_TO_TICKS(10));
                         }
@@ -1145,8 +1140,8 @@ void stepper_rmt_task_1(void *arg)
                 case 6:
                 {
                     motor1_ready = false;
-                    ESP_LOGI(TAG, "Motor 1: A executar Auto-Homing preparatorio...");
-                    stepper_rmt_homing(motor1, 14, 12, &my_table);
+                    ESP_LOGI(TAG, "Motor 1: Performing preparatory Auto-Homing...");
+                    stepper_rmt_homing(motor1, 14, 12, &table_config_x);
                     motor1_ready = true;
 
                     char filepath[256];
@@ -1155,11 +1150,11 @@ void stepper_rmt_task_1(void *arg)
                             vTaskDelay(pdMS_TO_TICKS(10));
                         }
                         if (nextion_profile == 6) {
-                            sendAckToNextion(163); // Envia ACK START MOTION
-                            stepper_rmt_run_file_profile(motor1, filepath, &my_table);
+                            sendAckToNextion(163); // Send ACK START MOTION
+                            stepper_rmt_run_file_profile(motor1, filepath, &table_config_x);
                         }
                     } else {
-                        ESP_LOGW(TAG, "Nenhum ficheiro .bin encontrado na memoria para reproduzir!");
+                        ESP_LOGW(TAG, "No .bin file found in memory to play!");
                         while (!motor2_ready && nextion_profile == 6) {
                             vTaskDelay(pdMS_TO_TICKS(10));
                         }
@@ -1181,20 +1176,20 @@ void stepper_rmt_task_1(void *arg)
                     break;
             }
             
-            motor1_busy = false; // Baixa a bandeira
+            motor1_busy = false; // Lower the flag
             
-            // Lógica de sincronização (apenas se ativado pelo Nextion)
+            // Synchronization logic (only if activated by Nextion)
             if (nextion_profile == current_profile && current_profile != 0) {
-                // Task 1 atua como Master: Aguarda até a Task 2 terminar
+                // Task 1 acts as Master: Waits until Task 2 finishes
                 while (motor2_busy && nextion_profile == current_profile) {
                     vTaskDelay(pdMS_TO_TICKS(10));
                 }
                 
-                // Se o perfil não foi abortado a meio da espera, finaliza!
+                // If the profile was not aborted mid-wait, finish it!
                 if (nextion_profile == current_profile) {
                     nextion_profile = 0; // Limpa o estado
                     parameters_recv = false; // Rearme obrigatório: bloqueia novos arranques até os dados serem revalidados
-                    ESP_LOGI(TAG, "Ensaio concluido com sucesso! A enviar ACK 164 (MOTION END) para o HMI.");
+                    ESP_LOGI(TAG, "Test completed successfully! Sending ACK 164 (MOTION END) to HMI.");
                     sendAckToNextion(164);
                 }
             }
@@ -1213,32 +1208,27 @@ void stepper_rmt_task_2(void *arg)
     // Initialize Motor 2 with the specified pins (EN: 15, DIR: 19, STEP: 18)
     stepper_rmt_context_t *motor2 = stepper_rmt_init(19, 15, 18);
 
-    shake_table_config_t my_table;
-    kinematics_init_axis(&my_table.axis_x, 27.0f, 95.0f); // 27mm peak-to-peak displacement, 95mm rod length
-    float gear_ratio = 5.18f;
-    kinematics_init_stepper(&my_table.stepper_x, 1.8f / gear_ratio, 32); // 1.8 degree step, 32 microsteps
-
-    // Atraso curto para dar prioridade de inicialização à Task 1, mas garante segurança se a Task 2 for mais rápida
+    // Short delay to give initialization priority to Task 1, but ensures safety if Task 2 is faster
     vTaskDelay(pdMS_TO_TICKS(50));
     if (s_adc1_handle == NULL) {
         adc_oneshot_unit_init_cfg_t init_config1 = { .unit_id = ADC_UNIT_1 };
         ESP_ERROR_CHECK(adc_oneshot_new_unit(&init_config1, &s_adc1_handle));
     }
 
-    // Configuração do ADC1 (Vamos usar o GPIO 39 = ADC1_CHANNEL_3)
+    // ADC1 Configuration (We will use GPIO 39 = ADC1_CHANNEL_3)
     
     adc_oneshot_chan_cfg_t adc_cfg = { .bitwidth = ADC_BITWIDTH_DEFAULT, .atten = ADC_ATTEN_DB_12 };
-    // Utilizando o GPIO 39 (Pino Input-Only, seguro para ADC e Wi-Fi)
+    // Using GPIO 39 (Input-Only Pin, safe for ADC and Wi-Fi)
     ESP_ERROR_CHECK(adc_oneshot_config_channel(s_adc1_handle, ADC_CHANNEL_3, &adc_cfg));
 
     // Execute Homing calibration on startup
 /*     if (motor2) {
-        stepper_rmt_homing(motor2, 27, 33, &my_table);
+        stepper_rmt_homing(motor2, 27, 33, &table_config_y);
     } */
     while (1) {
         // Smaller STEPPER
         uint8_t current_profile = nextion_profile;
-        // Fallback: Se premir o botão físico sem ensaio ativo, executa o Case 6 por defeito
+        // Fallback: If the physical button is pressed without an active test, execute Case 6 by default
         if (gpio_get_level(GPIO_NUM_21) == 0) {
             current_profile = (nextion_profile == 0) ? 6 : nextion_profile;
         }
@@ -1252,26 +1242,26 @@ void stepper_rmt_task_2(void *arg)
                     // Example: Amplitude 32.0mm, Frequency 2.0 Hz, Duration 5 Seconds
                     // stepper_rmt_run_sine_profile(motor2, 32.0f, 2.0f, 5.0f, &my_table); // Original rígido                
                     motor2_ready = false;
-                    ESP_LOGI(TAG, "Motor 2: A executar Auto-Homing preparatorio...");
-                    stepper_rmt_homing(motor2, 27, 33, &my_table);
+                    ESP_LOGI(TAG, "Motor 2: Performing preparatory Auto-Homing...");
+                    stepper_rmt_homing(motor2, 27, 33, &table_config_y);
                     motor2_ready = true;
 
                     // Sine Profile
                     if (nextion_target_disp_y > 0.0f && nextion_target_freq_y > 0.0f && nextion_target_time_s > 0.0f) {
-                        // Barreira de Sincronização: aguarda que o Motor 1 também acabe o seu Homing
+                        // Synchronization Barrier: wait for Motor 1 to also finish its Homing
                         while (!motor1_ready && nextion_profile == 1) {
                             vTaskDelay(pdMS_TO_TICKS(10));
                         }
 
-                        // Após ambos acabarem, arrancam em simultâneo
+                        // After both are finished, they start simultaneously
                         if (nextion_profile == 1) {
-                            stepper_rmt_run_sine_profile(motor2, nextion_target_disp_y, nextion_target_freq_y, nextion_target_time_s, &my_table);
+                            stepper_rmt_run_sine_profile(motor2, nextion_target_disp_y, nextion_target_freq_y, nextion_target_time_s, &table_config_y);
                         }
                     } else {
-                        ESP_LOGI(TAG, "Motor 2 parado (Deslocamento ou Freq nulos). A manter sincronia...");
+                        ESP_LOGI(TAG, "Motor 2 stopped (Displacement or Freq are null). Maintaining sync...");
                         
                         
-                        // Barreira de Sincronização: se Motor 2 não mexe, tem de aguardar o Homing do Motor 1!
+                        // Synchronization Barrier: if Motor 2 is not moving, it must wait for Motor 1's Homing!
                         while (!motor1_ready && nextion_profile == 1) {
                             vTaskDelay(pdMS_TO_TICKS(10));
                         }
@@ -1279,11 +1269,11 @@ void stepper_rmt_task_2(void *arg)
                         int64_t start_idle_us = esp_timer_get_time();
                         int64_t duration_idle_us = (int64_t)(nextion_target_time_s * 1000000.0f);
                         while ((esp_timer_get_time() - start_idle_us) < duration_idle_us) {
-                            if (nextion_profile == 0) break; // Aborta se o utilizador premir STOP
+                            if (nextion_profile == 0) break; // Abort if the user presses STOP
                             vTaskDelay(pdMS_TO_TICKS(50));
                         }
 
-                        // Desliga o driver no final da espera para não aquecer infinitamente
+                        // Disable the driver at the end of the wait to prevent infinite heating
                         gpio_set_level(motor2->gpio_en, !STEP_MOTOR_ENABLE_LEVEL);
                     }
                     break;
@@ -1295,22 +1285,22 @@ void stepper_rmt_task_2(void *arg)
                     //stepper_rmt_run_multistep_freq_profile(motor2, 33.0f, multiStep_freqs, multiStep_times, 4, 60.0f, 0.5f, &my_table);
 
                     motor2_ready = false;
-                    ESP_LOGI(TAG, "Motor 2: A executar Auto-Homing preparatorio...");
-                    stepper_rmt_homing(motor2, 27, 33, &my_table);
+                    ESP_LOGI(TAG, "Motor 2: Performing preparatory Auto-Homing...");
+                    stepper_rmt_homing(motor2, 27, 33, &table_config_y);
                     motor2_ready = true;
 
                     if (nextion_target_disp_y > 0.0f && nextion_target_time_s > 0.0f) {
-                        // Barreira de Sincronização: aguarda que o Motor 1 também acabe o seu Homing
+                        // Synchronization Barrier: wait for Motor 1 to also finish its Homing
                         while (!motor1_ready && nextion_profile == 2) {
                             vTaskDelay(pdMS_TO_TICKS(10));
                         }
 
-                        // Após ambos acabarem, arrancam em simultâneo
+                        // After both are finished, they start simultaneously
                         if (nextion_profile == 2) {
-                            stepper_rmt_run_multistep_freq_profile(motor2, nextion_target_disp_y, nextion_multistep_freq_y, nextion_multistep_time_y, 4, nextion_target_time_s, 0.5f, &my_table);
+                            stepper_rmt_run_multistep_freq_profile(motor2, nextion_target_disp_y, nextion_multistep_freq_y, nextion_multistep_time_y, 4, nextion_target_time_s, 0.5f, &table_config_y);
                         }
                     } else {
-                        ESP_LOGI(TAG, "Motor 2 parado (Deslocamento nulo). A manter sincronia...");
+                        ESP_LOGI(TAG, "Motor 2 stopped (Displacement is null). Maintaining sync...");
                         while (!motor1_ready && nextion_profile == 2) {
                             vTaskDelay(pdMS_TO_TICKS(10));
                         }
@@ -1330,22 +1320,22 @@ void stepper_rmt_task_2(void *arg)
                     //stepper_rmt_run_trapezoidal_freq_profile(motor2, 33.0f, 0.5f, 3.0f, 0.5f, 3.0f, 5.0f, 3.0f, &my_table)                    
                     
                     motor2_ready = false;
-                    ESP_LOGI(TAG, "Motor 2: A executar Auto-Homing preparatorio...");
-                    stepper_rmt_homing(motor2, 27, 33, &my_table);
+                    ESP_LOGI(TAG, "Motor 2: Performing preparatory Auto-Homing...");
+                    stepper_rmt_homing(motor2, 27, 33, &table_config_y);
                     motor2_ready = true;
 
                     if (nextion_target_disp_y > 0.0f) {
-                        // Barreira de Sincronização: aguarda que o Motor 1 também acabe o seu Homing
+                        // Synchronization Barrier: wait for Motor 1 to also finish its Homing
                         while (!motor1_ready && nextion_profile == 3) {
                             vTaskDelay(pdMS_TO_TICKS(10));
                         }
 
-                        // Após ambos acabarem, arrancam em simultâneo
+                        // After both are finished, they start simultaneously
                         if (nextion_profile == 3) {
-                            stepper_rmt_run_trapezoidal_freq_profile(motor2, nextion_target_disp_y, nextion_trapz_start_freq_y, nextion_trapz_cruise_freq_y, nextion_trapz_end_freq_y, nextion_trapz_accel_time_y, nextion_trapz_cruise_time_y, nextion_trapz_decel_time_y, &my_table);
+                            stepper_rmt_run_trapezoidal_freq_profile(motor2, nextion_target_disp_y, nextion_trapz_start_freq_y, nextion_trapz_cruise_freq_y, nextion_trapz_end_freq_y, nextion_trapz_accel_time_y, nextion_trapz_cruise_time_y, nextion_trapz_decel_time_y, &table_config_y);
                         }
                     } else {
-                        ESP_LOGI(TAG, "Motor 2 parado (Deslocamento nulo). A manter sincronia...");
+                        ESP_LOGI(TAG, "Motor 2 stopped (Displacement is null). Maintaining sync...");
                         while (!motor1_ready && nextion_profile == 3) {
                             vTaskDelay(pdMS_TO_TICKS(10));
                         }
@@ -1367,7 +1357,7 @@ void stepper_rmt_task_2(void *arg)
                     //  Example: Amplitude 32.0mm, Duration: 10 Segundos, Dynamic frequency manage by ADC between 0.5Hz to 5.0Hz        
                     //stepper_rmt_run_realtime_sine_profile(motor2, 33.0f, 10.0f, s_adc1_handle, ADC_CHANNEL_3, 0.5f, 5.0f, &my_table);  
                     
-                    stepper_rmt_homing(motor2, 27, 33, &my_table);
+                    stepper_rmt_homing(motor2, 27, 33, &table_config_y);
                     motor2_ready = true;
 
                     if (nextion_target_disp_y > 0.0f && nextion_target_time_s > 0.0f) {
@@ -1375,10 +1365,10 @@ void stepper_rmt_task_2(void *arg)
                             vTaskDelay(pdMS_TO_TICKS(10));
                         }
                         if (nextion_profile == 4) {
-                            stepper_rmt_run_realtime_sine_profile(motor2, nextion_target_disp_y, nextion_target_time_s, s_adc1_handle, ADC_CHANNEL_3, nextion_rt_min_freq_y, nextion_rt_max_freq_y, &my_table);
+                            stepper_rmt_run_realtime_sine_profile(motor2, nextion_target_disp_y, nextion_target_time_s, s_adc1_handle, ADC_CHANNEL_3, nextion_rt_min_freq_y, nextion_rt_max_freq_y, &table_config_y);
                         }
                     } else {
-                        ESP_LOGI(TAG, "Motor 2 parado (Deslocamento nulo). A manter sincronia...");
+                        ESP_LOGI(TAG, "Motor 2 stopped (Displacement is null). Maintaining sync...");
                         while (!motor1_ready && nextion_profile == 4) {
                             vTaskDelay(pdMS_TO_TICKS(10));
                         }
@@ -1394,8 +1384,8 @@ void stepper_rmt_task_2(void *arg)
                 case 5:
                     // Sweep / Chirp Profile (IEC/ISO Standard Logarithmic Sweep)
                     motor2_ready = false;
-                    ESP_LOGI(TAG, "Motor 2: A executar Auto-Homing preparatorio...");
-                    stepper_rmt_homing(motor2, 27, 33, &my_table);
+                    ESP_LOGI(TAG, "Motor 2: Performing preparatory Auto-Homing...");
+                    stepper_rmt_homing(motor2, 27, 33, &table_config_y);
                     motor2_ready = true;
 
                     if (nextion_target_disp_y > 0.0f && nextion_target_time_s > 0.0f) {
@@ -1403,10 +1393,10 @@ void stepper_rmt_task_2(void *arg)
                             vTaskDelay(pdMS_TO_TICKS(10));
                         }
                         if (nextion_profile == 5) {
-                            stepper_rmt_run_sweep_profile(motor2, nextion_target_disp_y, nextion_sweep_min_freq_y, nextion_sweep_max_freq_y, nextion_target_time_s, nextion_sweep_isBid_y, &my_table);
+                            stepper_rmt_run_sweep_profile(motor2, nextion_target_disp_y, nextion_sweep_min_freq_y, nextion_sweep_max_freq_y, nextion_target_time_s, nextion_sweep_isBid_y, &table_config_y);
                         }
                     } else {
-                        ESP_LOGI(TAG, "Motor 2 parado (Deslocamento nulo). A manter sincronia...");
+                        ESP_LOGI(TAG, "Motor 2 stopped (Displacement is null). Maintaining sync...");
                         while (!motor1_ready && nextion_profile == 5) {
                             vTaskDelay(pdMS_TO_TICKS(10));
                         }
@@ -1426,8 +1416,8 @@ void stepper_rmt_task_2(void *arg)
                 case 6:
                 {
                     motor2_ready = false;
-                    ESP_LOGI(TAG, "Motor 2: A executar Auto-Homing preparatorio...");
-                    stepper_rmt_homing(motor2, 27, 33, &my_table);
+                    ESP_LOGI(TAG, "Motor 2: Performing preparatory Auto-Homing...");
+                    stepper_rmt_homing(motor2, 27, 33, &table_config_y);
                     motor2_ready = true;
 
                     char filepath[256];
@@ -1436,10 +1426,10 @@ void stepper_rmt_task_2(void *arg)
                             vTaskDelay(pdMS_TO_TICKS(10));
                         }
                         if (nextion_profile == 6) {
-                            stepper_rmt_run_file_profile(motor2, filepath, &my_table);
+                            stepper_rmt_run_file_profile(motor2, filepath, &table_config_y);
                         }
                     } else {
-                        ESP_LOGW(TAG, "Nenhum ficheiro .bin encontrado na memoria para reproduzir!");
+                        ESP_LOGW(TAG, "No .bin file found in memory to play!");
                         while (!motor1_ready && nextion_profile == 6) {
                             vTaskDelay(pdMS_TO_TICKS(10));
                         }
@@ -1461,11 +1451,11 @@ void stepper_rmt_task_2(void *arg)
                     break;
             }
 
-            motor2_busy = false; // Baixa a bandeira
+            motor2_busy = false; // Lower the flag
 
-            // Lógica de sincronização (apenas se ativado pelo Nextion)
+            // Synchronization logic (only if activated by Nextion)
             if (nextion_profile == current_profile && current_profile != 0) {
-                // A Task 2 é Escrava: apenas aguarda que a Task 1 limpe a variável global
+                // Task 2 is a Slave: it just waits for Task 1 to clear the global variable
                 while (nextion_profile == current_profile) {
                     vTaskDelay(pdMS_TO_TICKS(10));
                 }

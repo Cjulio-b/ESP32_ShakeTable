@@ -139,13 +139,14 @@ void app_main(void)
 	init_uart();
 	start_wifi_ap(); //start Wi-Fi
 	start_webserver(); //start HTTP server
+	config_manager_init(); // Carrega configurações da NVS ou usa defaults
 	init_i2c_system(); // Inicia I2C e deteta o MCP23017
 
 	// --- Kinematics Structure Test ---
 	
 	/*shake_table_config_t my_table;
 	kinematics_init_axis(&my_table.axis_x, 33.0f, 66.0f); // 33mm peak-to-peak displacement, 66mm rod length
-	kinematics_init_stepper(&my_table.stepper_x, 1.8f, 32);  // 1.8 degree step, 32 microsteps (6400 steps/rev)
+	kinematics_init_stepper(&my_table.stepper_x, 1.8f, 1.0f, 32);  // 1.8 degree step, gear 1.0, 32 microsteps (6400 steps/rev)
 
 	float angle = kinematics_calc_angular_position(&my_table.stepper_x, 1600);
 	float position_mm = kinematics_calc_linear_position(&my_table.axis_x, angle);
