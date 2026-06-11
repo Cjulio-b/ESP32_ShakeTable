@@ -199,8 +199,8 @@ void GPIO_init(void)
 	gpio_set_pull_mode(GPIO_NUM_14, GPIO_PULLUP_ONLY); // Enable pull-up resistor
 		
 	//OUTPUT GPIOs
-	gpio_set_direction(GPIO_NUM_26, GPIO_MODE_OUTPUT); // LED for Button Stepper Motor1
-	gpio_set_direction(GPIO_NUM_25, GPIO_MODE_OUTPUT); // LED for Button Stepper Motor2
+	// gpio_set_direction(GPIO_NUM_26, GPIO_MODE_OUTPUT); // LEDs transferidos para MCP23017 (I2C)
+	// gpio_set_direction(GPIO_NUM_25, GPIO_MODE_OUTPUT); 
 
 	//Stepper Motor GPIOs - L298N
 	/*gpio_config_t io_conf = {

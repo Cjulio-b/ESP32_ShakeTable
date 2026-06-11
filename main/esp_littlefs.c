@@ -51,6 +51,10 @@ void init_littlefs(void)
         ESP_LOGI(TAG, "Partition size: total: %u bytes, used: %u bytes", total, used);
     }
     
+    // Criar as pastas (ignora se já existirem)
+    mkdir("/storage/input", 0777);
+    mkdir("/storage/output", 0777);
+
     /*
     // Use POSIX and C standard library functions to work with files.
     // First create a file.

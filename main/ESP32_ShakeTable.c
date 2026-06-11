@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <time.h>
+#include <math.h>
 #include "esp_mac.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -10,6 +11,7 @@
 #include "kinematics.h"
 #include "mcp23017.h"
 #include "adxl345.h"
+#include "esp_timer.h"
 
 static const char* TAG = "ESP32_ShakeTable";
 #define UART_TASK_STACK_SIZE 4096
@@ -19,14 +21,33 @@ extern TaskHandle_t txTaskHandle;
 #define I2C_MASTER_SCL_IO 22
 #define I2C_MASTER_SDA_IO 23
 
+#define I2C_MASTER_SCL_IO_2 25
+#define I2C_MASTER_SDA_IO_2 26
+
 i2c_master_bus_handle_t i2c_bus_handle = NULL;
+i2c_master_bus_handle_t i2c_bus_2_handle = NULL;
 i2c_master_dev_handle_t mcp_handle = NULL;
 i2c_master_dev_handle_t adxl_table_handle = NULL;
 i2c_master_dev_handle_t adxl_specimen_handle = NULL;
 
+void scan_i2c_bus(i2c_master_bus_handle_t bus_handle, const char* bus_name) {
+    ESP_LOGI("I2C_SCAN", "Starting scanner on bus: %s", bus_name);
+    int found = 0;
+    for (uint8_t addr = 1; addr < 127; addr++) {
+        esp_err_t err = i2c_master_probe(bus_handle, addr, 100);
+        if (err == ESP_OK) {
+            ESP_LOGI("I2C_SCAN", " -> Device detected at address: 0x%02X", addr);
+            found++;
+        }
+    }
+    if (found == 0) {
+        ESP_LOGW("I2C_SCAN", " -> No devices found on %s!", bus_name);
+    }
+}
+
 void init_i2c_system(void) {
     i2c_master_bus_config_t bus_config = {
-        .i2c_port = -1,
+        .i2c_port = I2C_NUM_0, // Força a usar o bloco físico 0
         .sda_io_num = I2C_MASTER_SDA_IO,
         .scl_io_num = I2C_MASTER_SCL_IO,
         .clk_source = I2C_CLK_SRC_DEFAULT,
@@ -36,6 +57,16 @@ void init_i2c_system(void) {
     
     ESP_ERROR_CHECK(i2c_new_master_bus(&bus_config, &i2c_bus_handle));
     
+    i2c_master_bus_config_t bus_config_2 = {
+        .i2c_port = I2C_NUM_1, // Força a usar o bloco físico 1
+        .sda_io_num = I2C_MASTER_SDA_IO_2,
+        .scl_io_num = I2C_MASTER_SCL_IO_2,
+        .clk_source = I2C_CLK_SRC_DEFAULT,
+        .glitch_ignore_cnt = 7,
+        .flags.enable_internal_pullup = true,
+    };
+    ESP_ERROR_CHECK(i2c_new_master_bus(&bus_config_2, &i2c_bus_2_handle));
+
     // Inicializa o Expansor de I/O
     if (mcp23017_init(i2c_bus_handle, MCP23017_I2C_ADDR_DEFAULT, &mcp_handle) == ESP_OK) {
         // Exemplo: Configurar todos os Pinos do BANK A como OUTPUTS (0x00)
@@ -43,6 +74,7 @@ void init_i2c_system(void) {
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "Timeout/Failed to configure MCP23017! Check SDA/SCL and RST pins.");
         } else {
+            mcp23017_write_reg(mcp_handle, MCP23017_GPIOA, 0x00); // Garante que os LEDs (A0 e A1) começam apagados
             ESP_LOGI(TAG, "MCP23017 setup completed successfully!");
         }
     }
@@ -51,11 +83,98 @@ void init_i2c_system(void) {
     if (adxl345_init(i2c_bus_handle, ADXL345_I2C_ADDR_GND, &adxl_table_handle) == ESP_OK) {
         ESP_LOGI(TAG, "Table Accelerometer initialized!");
     }
+    
+    // Run I2C Scanner to debug hardware
+    scan_i2c_bus(i2c_bus_handle, "BUS 1 (MCP + ADXL Table)");
+    scan_i2c_bus(i2c_bus_2_handle, "BUS 2 (ADXL Specimen - Pins 25/26)");
 
-    // Initialize ADXL345 (Test Specimen Dynamics)
-    if (adxl345_init(i2c_bus_handle, ADXL345_I2C_ADDR_3V3, &adxl_specimen_handle) == ESP_OK) {
-        ESP_LOGI(TAG, "Specimen Accelerometer initialized!");
+    // Initialize ADXL345 (Test Specimen Dynamics) na "via verde" 2 com endereço default GND!
+    if (adxl345_init(i2c_bus_2_handle, ADXL345_I2C_ADDR_GND, &adxl_specimen_handle) == ESP_OK) {
+        ESP_LOGI(TAG, "Specimen Accelerometer initialized on BUS 2!");
     }
+}
+
+// =========================================================================
+// Calcula a posição matemática teórica em 't' (para gráficos suaves no CSV)
+// =========================================================================
+static float get_theoretical_position(char axis, int profile, float t) {
+    float target_disp = (axis == 'x') ? nextion_target_disp_x : nextion_target_disp_y;
+    if (target_disp <= 0.0f) return 0.0f;
+
+    float amp = target_disp / 2.0f;
+    float freq = 0.1f; // Frequência de segurança inicial
+
+    switch (profile) {
+        case 1: // Sine Wave
+            freq = (axis == 'x') ? nextion_target_freq_x : nextion_target_freq_y;
+            break;
+            
+        case 2: { // Multi-Step Frequency
+            float *freqs = (axis == 'x') ? nextion_multistep_freq_x : nextion_multistep_freq_y;
+            float *times = (axis == 'x') ? nextion_multistep_time_x : nextion_multistep_time_y;
+            float blend_time = 0.5f; // Blend time hardcoded na motor task
+
+            float cycle_time = times[0] + times[1] + times[2] + times[3];
+            if (cycle_time <= 0.0f) return 0.0f;
+
+            float t_cycle = fmodf(t, cycle_time);
+            float st_time = 0.0f;
+            int stage = 0;
+            float time_in_stage = t_cycle;
+
+            for (int i = 0; i < 4; i++) {
+                if (t_cycle >= st_time && t_cycle < st_time + times[i]) {
+                    stage = i;
+                    time_in_stage = t_cycle - st_time;
+                    break;
+                }
+                st_time += times[i];
+            }
+
+            int prev_stage = (stage == 0) ? 3 : stage - 1;
+            freq = freqs[stage];
+            if (time_in_stage < blend_time) {
+                float t_blend = time_in_stage / blend_time;
+                freq = freqs[prev_stage] + (freqs[stage] - freqs[prev_stage]) * t_blend;
+            }
+            break;
+        }
+        case 3: { // Trapezoidal
+            float start_f = (axis == 'x') ? nextion_trapz_start_freq_x : nextion_trapz_start_freq_y;
+            float cruise_f = (axis == 'x') ? nextion_trapz_cruise_freq_x : nextion_trapz_cruise_freq_y;
+            float end_f = (axis == 'x') ? nextion_trapz_end_freq_x : nextion_trapz_end_freq_y;
+            float accel_t = (axis == 'x') ? nextion_trapz_accel_time_x : nextion_trapz_accel_time_y;
+            float cruise_t = (axis == 'x') ? nextion_trapz_cruise_time_x : nextion_trapz_cruise_time_y;
+            float decel_t = (axis == 'x') ? nextion_trapz_decel_time_x : nextion_trapz_decel_time_y;
+            
+            if (accel_t > 0.001f && t < accel_t) freq = start_f + (cruise_f - start_f) * (t / accel_t);
+            else if (t < accel_t + cruise_t) freq = cruise_f;
+            else if (decel_t > 0.001f && t < accel_t + cruise_t + decel_t) freq = cruise_f - (cruise_f - end_f) * ((t - accel_t - cruise_t) / decel_t);
+            else freq = end_f;
+            break;
+        }
+        case 5: { // Sweep / Chirp
+            float start_f = (axis == 'x') ? nextion_sweep_min_freq_x : nextion_sweep_min_freq_y;
+            float end_f = (axis == 'x') ? nextion_sweep_max_freq_x : nextion_sweep_max_freq_y;
+            float dur = nextion_target_time_s;
+            bool is_bid = (axis == 'x') ? nextion_sweep_isBid_x : nextion_sweep_isBid_y;
+            
+            float eff_t = t;
+            if (is_bid && eff_t > dur) eff_t = (2.0f * dur) - eff_t; // Fase descendente
+            float norm_t = (dur > 0.0f) ? (eff_t / dur) : 1.0f;
+            if (norm_t > 1.0f) norm_t = 1.0f;
+            
+            if (start_f > 0.0f) freq = start_f * powf(end_f / start_f, norm_t);
+            break;
+        }
+    }
+
+    #ifndef M_PI
+    #define M_PI 3.14159265358979323846f
+    #endif
+
+    if (freq < 0.1f) freq = 0.1f;
+    return amp * sinf(2.0f * M_PI * freq * t);
 }
 
 void accelerometer_task(void *arg)
@@ -88,6 +207,8 @@ void accelerometer_task(void *arg)
     // ---------------------------------
 
     int print_counter = 0;
+    FILE *f_csv = NULL;
+    int64_t start_record_time = 0;
 
     while (1) {
         // Only read and process if an active profile is running (to save CPU)
@@ -113,8 +234,31 @@ void accelerometer_task(void *arg)
             s_y -= off_sy;
             s_z -= off_sz;
 
-            // Future integration: Save data to SD card or stream via WiFi/UART
+            // --- Gravação do CSV no LittleFS a 100Hz ---
+            if (f_csv == NULL) {
+                f_csv = fopen("/storage/output/resultados.csv", "w");
+                if (f_csv) {
+                    fprintf(f_csv, "Tempo_s,Target_X_mm,Target_Y_mm,Acc_Table_X_g,Acc_Table_Y_g,Acc_Table_Z_g,Acc_Specimen_X_g,Acc_Specimen_Y_g,Acc_Specimen_Z_g\n");
+                    start_record_time = esp_timer_get_time();
+                    ESP_LOGI("ACCEL_TASK", "A gravar dados no disco...");
+                }
+            }
             
+            if (f_csv) {
+                float t_sec = (float)(esp_timer_get_time() - start_record_time) / 1000000.0f;
+                
+                float csv_target_x = current_target_pos_x;
+                float csv_target_y = current_target_pos_y;
+                
+                // Para os perfis determinísticos (1, 2, 3 e 5), calcular a onda matemática perfeitamente suave!
+                if (nextion_profile == 1 || nextion_profile == 2 || nextion_profile == 3 || nextion_profile == 5) {
+                    csv_target_x = get_theoretical_position('x', nextion_profile, t_sec);
+                    csv_target_y = get_theoretical_position('y', nextion_profile, t_sec);
+                }
+                
+                fprintf(f_csv, "%.3f,%.3f,%.3f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f\n", t_sec, csv_target_x, csv_target_y, t_x, t_y, t_z, s_x, s_y, s_z);
+            }
+
             // Test Print: Imprimir a cada ~500ms (50 loops de 10ms) para não bloquear a UART
             if (++print_counter >= 50) {
                 ESP_LOGI("ACCEL_TASK", "Table[g]: X=%.2f, Y=%.2f, Z=%.2f | Specimen[g]: X=%.2f, Y=%.2f, Z=%.2f", t_x, t_y, t_z, s_x, s_y, s_z);
@@ -125,6 +269,14 @@ void accelerometer_task(void *arg)
                 // Abrandar ciclo em caso de fios soltos para evitar Stack Overflow / Panic
                 vTaskDelay(pdMS_TO_TICKS(100));
             }
+        } else {
+            // Se o perfil acabou, fecha o ficheiro em segurança
+            if (f_csv != NULL) {
+                fclose(f_csv);
+                f_csv = NULL;
+                ESP_LOGI("ACCEL_TASK", "Gravação do CSV concluída e ficheiro fechado com sucesso!");
+            }
+            current_target_pos_x = 0.0f; current_target_pos_y = 0.0f;
         }
         // Delay 10ms = ~100Hz sampling rate
         vTaskDelay(pdMS_TO_TICKS(10));

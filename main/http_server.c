@@ -1,43 +1,3 @@
-/*#include "esp_mac.h"
-#include "driver/gpio.h"
-#include "esp_http_server.h"
-
-esp_err_t gpio_handler(httpd_req_t *req)
-{
-    int gpio21_level = gpio_get_level(GPIO_NUM_21);
-    int gpio26_level = gpio_get_level(GPIO_NUM_26);
-
-    char response[100];
-    snprintf(response, sizeof(response),
-             "<html><body>"
-             "<h1>GPIO Viewer</h1>"
-             "<p>GPIO 21: %d</p>"
-             "<p>GPIO 26: %d</p>"
-             "</body></html>",
-             gpio21_level, gpio26_level);
-
-    httpd_resp_send(req, response, HTTPD_RESP_USE_STRLEN);
-    return ESP_OK;
-}
-
-httpd_handle_t start_webserver(void)
-{
-    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    httpd_handle_t server = NULL;
-    httpd_start(&server, &config);
-
-    httpd_uri_t gpio_uri = {
-        .uri = "/",
-        .method = HTTP_GET,
-        .handler = gpio_handler,
-        .user_ctx = NULL
-    };
-    httpd_register_uri_handler(server, &gpio_uri);
-    
-    return server;
-}*/
-
-// Versao 2 -----------------------
 #include "esp_mac.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
@@ -57,22 +17,6 @@ httpd_handle_t start_webserver(void)
 
 
 // ========================
-// Handler para JSON /gpio
-// ========================
-esp_err_t gpio_handler(httpd_req_t *req) {
-    char resp[128];
-    int gpio21_val = gpio_get_level(GPIO_INPUT);
-    int gpio26_val = gpio_get_level(GPIO_OUTPUT);
-
-    snprintf(resp, sizeof(resp),
-             "{\"gpio21\": %d, \"gpio26\": %d}", gpio21_val, gpio26_val);
-
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
-    return ESP_OK;
-}
-
-// ========================
 // Handler para Upload de Ficheiros
 // ========================
 esp_err_t upload_handler(httpd_req_t *req) {
@@ -84,14 +28,14 @@ esp_err_t upload_handler(httpd_req_t *req) {
         strcpy(filename, "upload.bin"); // Fallback caso o browser não envie
     }
 
-    // 2. Apagar ficheiros antigos no LittleFS para não acumular lixo
-    DIR *dir = opendir("/storage");
+    // 2. Apagar ficheiros antigos na pasta input para não acumular lixo
+    DIR *dir = opendir("/storage/input");
     if (dir) {
         struct dirent *ent;
         while ((ent = readdir(dir)) != NULL) {
             if (strcmp(ent->d_name, ".") != 0 && strcmp(ent->d_name, "..") != 0) {
                 char old_file[512];
-                snprintf(old_file, sizeof(old_file), "/storage/%s", ent->d_name);
+                snprintf(old_file, sizeof(old_file), "/storage/input/%s", ent->d_name);
                 unlink(old_file);
             }
         }
@@ -99,7 +43,7 @@ esp_err_t upload_handler(httpd_req_t *req) {
     }
 
     // 3. Abrir novo ficheiro para escrita com o nome original
-    snprintf(filepath, sizeof(filepath), "/storage/%s", filename);
+    snprintf(filepath, sizeof(filepath), "/storage/input/%s", filename);
     FILE *fd = fopen(filepath, "w");
     if (!fd) {
         ESP_LOGE(TAG, "Falha ao criar o ficheiro %s", filepath);
@@ -137,7 +81,7 @@ esp_err_t upload_handler(httpd_req_t *req) {
 // ========================
 esp_err_t fileinfo_handler(httpd_req_t *req) {
     char resp[256];
-    DIR *dir = opendir("/storage");
+    DIR *dir = opendir("/storage/input");
     struct dirent *ent;
     char filename[128] = "";
     long filesize = 0;
@@ -149,7 +93,7 @@ esp_err_t fileinfo_handler(httpd_req_t *req) {
             if (strcmp(ent->d_name, ".") != 0 && strcmp(ent->d_name, "..") != 0) {
                 strncpy(filename, ent->d_name, sizeof(filename)-1);
                 char filepath[512];
-                snprintf(filepath, sizeof(filepath), "/storage/%s", ent->d_name);
+                snprintf(filepath, sizeof(filepath), "/storage/input/%s", ent->d_name);
                 struct stat st;
                 if (stat(filepath, &st) == 0) { filesize = st.st_size; exists = true; }
                 break;
@@ -169,6 +113,44 @@ esp_err_t fileinfo_handler(httpd_req_t *req) {
 }
 
 // ========================
+// Handlers do Acelerómetro
+// ========================
+esp_err_t resultinfo_handler(httpd_req_t *req) {
+    char resp[128];
+    struct stat st;
+    if (stat("/storage/output/resultados.csv", &st) == 0) {
+        snprintf(resp, sizeof(resp), "{\"exists\": true, \"size\": %ld}", st.st_size);
+    } else {
+        snprintf(resp, sizeof(resp), "{\"exists\": false}");
+    }
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+esp_err_t download_handler(httpd_req_t *req) {
+    FILE *fd = fopen("/storage/output/resultados.csv", "r");
+    if (!fd) {
+        ESP_LOGE(TAG, "Falha ao abrir resultados.csv");
+        httpd_resp_send_404(req);
+        return ESP_FAIL;
+    }
+
+    httpd_resp_set_type(req, "text/csv");
+    // O nome do anexo será alterado via Javascript no browser
+    httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=resultados.csv");
+
+    char buf[1024];
+    size_t read_bytes;
+    while ((read_bytes = fread(buf, 1, sizeof(buf), fd)) > 0) {
+        httpd_resp_send_chunk(req, buf, read_bytes);
+    }
+    httpd_resp_send_chunk(req, NULL, 0); // End of file
+    fclose(fd);
+    return ESP_OK;
+}
+
+// ========================
 // Página HTML principal
 // ========================
 esp_err_t index_handler(httpd_req_t *req) {
@@ -178,22 +160,17 @@ esp_err_t index_handler(httpd_req_t *req) {
         "<head>"
         "<meta charset='UTF-8'>"
         "<meta name='viewport' content='width=device-width, initial-scale=1.0'>"
-        "<title>Monitor GPIO ESP32</title>"
+        "<title>ESP32 Shake Table DAQ</title>"
         "<style>"
-        "body{font-family:Arial;text-align:center;margin-top:40px;}"
-        ".box{display:inline-block;padding:20px;margin:10px;border:2px solid #333;"
-        "border-radius:10px;width:150px;}"
-        ".on{background-color:#4CAF50;color:white;}"
-        ".off{background-color:#f44336;color:white;}"
-        ".upload-section{margin-top:40px;padding:20px;background:#f9f9f9;border-radius:10px;display:inline-block;}"
+        "body{font-family:Arial;text-align:center;margin-top:20px;}"
+        ".upload-section{margin:20px;padding:20px;background:#f9f9f9;border-radius:10px;display:inline-block;vertical-align:top;width:400px;min-height:220px;}"
+        "button{padding:10px 15px; font-weight:bold; cursor:pointer;}"
         "</style>"
         "</head>"
         "<body>"
-        "<h2>Estado dos GPIOs (ESP32)</h2>"
-        "<div id='gpio21' class='box'>GPIO21: --</div>"
-        "<div id='gpio26' class='box'>GPIO26: --</div>"
+        "<h2>ESP32 Shake Table Control</h2>"
         "<div class='upload-section'>"
-        "<h3>Upload de Sismo (.dat, .txt, .bin)</h3>"
+        "<h3>Input: Upload de Sismo (.bin)</h3>"
         "<div id='fileStatus' style='margin-bottom:15px; padding:10px; background:#e0e0e0; border-radius:5px;'>"
         "Ficheiro atual: <span id='fileName'>A verificar...</span>"
         "</div>"
@@ -204,19 +181,15 @@ esp_err_t index_handler(httpd_req_t *req) {
         "<p id='status' style='font-weight:bold;color:#333;'></p>"
         "<pre id='logOutput' style='text-align:left; font-size:0.8em; background:#eee; padding:10px; border-radius:5px; display:none; overflow-x:auto;'></pre>"
         "</div>"
+        "<div class='upload-section'>"
+        "<h3>Output: Resultados de Ensaio</h3>"
+        "<div style='margin-bottom:15px; padding:10px; background:#e0e0e0; border-radius:5px;'>"
+        "Dados na Memória: <span id='resName'>A verificar...</span>"
+        "</div>"
+        "<p style='font-size:0.9em; color:#555;'>Dados dos acelerómetros e posições gravados a 100Hz do último ensaio executado.</p>"
+        "<button onclick='downloadResult()' style='background:#4CAF50; color:white; border:none; border-radius:5px;'>Descarregar CSV (Excel)</button>"
+        "</div>"
         "<script>"
-        "async function atualizarGPIO(){"
-        "try{"
-        "const res=await fetch('/gpio');"
-        "const data=await res.json();"
-        "atualizarBox('gpio21',data.gpio21);"
-        "atualizarBox('gpio26',data.gpio26);"
-        "}catch(e){console.error(e);}}"
-        "function atualizarBox(id,val){"
-        "const el=document.getElementById(id);"
-        "el.textContent=id.toUpperCase()+': '+val;"
-        "el.className='box '+(val?'on':'off');}"
-        "setInterval(atualizarGPIO,500);"
         "async function checkFile() {"
         "  try {"
         "    const res = await fetch('/fileinfo');"
@@ -226,6 +199,35 @@ esp_err_t index_handler(httpd_req_t *req) {
         "  } catch(e) { document.getElementById('fileName').innerText = 'Erro ao verificar'; }"
         "}"
         "checkFile();"
+        "async function checkResult() {"
+        "  try {"
+        "    const res = await fetch('/resultinfo');"
+        "    const data = await res.json();"
+        "    if(data.exists) document.getElementById('resName').innerHTML = '<b>resultados.csv</b> (' + (data.size/1024).toFixed(2) + ' KB)';"
+        "    else document.getElementById('resName').innerHTML = '<i>nenhum ensaio concluído</i>';"
+        "  } catch(e) { document.getElementById('resName').innerText = 'Erro ao verificar'; }"
+        "}"
+        "checkResult(); setInterval(checkResult, 3000);"
+        "async function downloadResult() {"
+        "  try {"
+        "    const res = await fetch('/download');"
+        "    if (!res.ok) throw new Error('Not found');"
+        "    const blob = await res.blob();"
+        "    const d = new Date();"
+        "    const pad = (n) => n.toString().padStart(2, '0');"
+        "    const filename = 'ensaio_' + pad(d.getDate()) + pad(d.getMonth()+1) + d.getFullYear() + '_' + pad(d.getHours()) + pad(d.getMinutes()) + '.csv';"
+        "    const url = window.URL.createObjectURL(blob);"
+        "    const a = document.createElement('a');"
+        "    a.href = url;"
+        "    a.download = filename;"
+        "    document.body.appendChild(a);"
+        "    a.click();"
+        "    a.remove();"
+        "    window.URL.revokeObjectURL(url);"
+        "  } catch(e) {"
+        "    alert('Não existem dados na memória! Faça um ensaio primeiro.');"
+        "  }"
+        "}"
         "async function uploadFile() {"
         "  const el = document.getElementById('fileInput');"
         "  if(el.files.length === 0) return alert('Selecione um ficheiro!');"
@@ -233,37 +235,6 @@ esp_err_t index_handler(httpd_req_t *req) {
         "  let filename = file.name;"
         "  let payload = file;"
         "  let lowerName = filename.toLowerCase();"
-        /*"  if (lowerName.endsWith('.dat') || lowerName.endsWith('.txt')) {"
-        "    document.getElementById('status').innerText = 'A processar e a converter... aguarde.';"
-        "    const text = await file.text();"
-        "    const lines = text.split(/\\r?\\n/);"
-        "    let pos = [];"
-        "    let times = [];"
-        "    for (let line of lines) {"
-        "      line = line.trim();"
-        "      if (!line || line.startsWith('%') || line.startsWith('#') || line.toLowerCase().startsWith('time')) continue;"
-        "      line = line.replace(/,/g, '.');" // Troca as vírgulas por pontos decimais
-        "      let parts = line.split(/\\s+/);"
-        "      if (parts.length >= 2) {"
-        "        let t = parseFloat(parts[0]);"
-        "        let val = parseFloat(parts[1]);"
-        "        if (!isNaN(t) && !isNaN(val)) { times.push(t); pos.push(val); }"
-        "      } else if (parts.length === 1) {"
-        "        let val = parseFloat(parts[0]);"
-        "        if (!isNaN(val)) pos.push(val);"
-        "      }"
-        "    }"
-        "    if (pos.length === 0) { document.getElementById('status').innerText=''; return alert('Nenhum dado numérico encontrado.'); }"
-        "    let dt = 0.01;"
-        "    if (times.length >= 2) { dt = times[1] - times[0]; if (dt <= 0) dt = 0.01; }" // Calcula dt com base no Tempo
-        "    const buffer = new ArrayBuffer(8 + pos.length * 4);"
-        "    const view = new DataView(buffer);"
-        "    view.setUint32(0, pos.length, true);"
-        "    view.setFloat32(4, dt, true);"
-        "    for (let i=0; i<pos.length; i++) view.setFloat32(8 + i * 4, pos[i], true);"
-        "    payload = new Blob([buffer]);"
-        "    filename = filename.substring(0, filename.lastIndexOf('.')) + '.bin';"
-        "  }"*/
         "  if (!lowerName.endsWith('.bin')) {"
         "    try {"
         "      document.getElementById('status').innerText = 'A processar e a converter... aguarde.';"
@@ -346,15 +317,6 @@ httpd_handle_t start_webserver(void) {
         };
         httpd_register_uri_handler(server, &index_uri);
 
-        // Rota JSON /gpio
-        httpd_uri_t gpio_uri = {
-            .uri = "/gpio",
-            .method = HTTP_GET,
-            .handler = gpio_handler,
-            .user_ctx = NULL
-        };
-        httpd_register_uri_handler(server, &gpio_uri);
-
         // Rota de Upload
         httpd_uri_t upload_uri = {
             .uri = "/upload",
@@ -372,6 +334,24 @@ httpd_handle_t start_webserver(void) {
             .user_ctx = NULL
         };
         httpd_register_uri_handler(server, &fileinfo_uri);
+        
+        // Rota de Info dos Resultados
+        httpd_uri_t resultinfo_uri = {
+            .uri = "/resultinfo",
+            .method = HTTP_GET,
+            .handler = resultinfo_handler,
+            .user_ctx = NULL
+        };
+        httpd_register_uri_handler(server, &resultinfo_uri);
+
+        // Rota de Download CSV
+        httpd_uri_t download_uri = {
+            .uri = "/download",
+            .method = HTTP_GET,
+            .handler = download_handler,
+            .user_ctx = NULL
+        };
+        httpd_register_uri_handler(server, &download_uri);
 
         ESP_LOGI(TAG, "Servidor HTTP iniciado!");
     } else {

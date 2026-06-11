@@ -53,9 +53,14 @@ extern bool parameters_recv;
 
 // I2C Handles globais --------------------------------
 extern i2c_master_bus_handle_t i2c_bus_handle;
+extern i2c_master_bus_handle_t i2c_bus_2_handle;
 extern i2c_master_dev_handle_t mcp_handle;
 extern i2c_master_dev_handle_t adxl_table_handle;
 extern i2c_master_dev_handle_t adxl_specimen_handle;
+
+// Global Tracking Variables for Data Logging ---------
+extern volatile float current_target_pos_x;
+extern volatile float current_target_pos_y;
 
 // Global Configuration Structures --------------------
 extern shake_table_config_t table_config_x;
@@ -71,7 +76,6 @@ void init_littlefs(void);
 
 // WIFI - HTTP Server functions ----------------------------------
 void start_wifi_ap(void);
-esp_err_t gpio_handler(httpd_req_t *req);
 httpd_handle_t start_webserver(void);
 
 // I2C functions ------------------------------------------------

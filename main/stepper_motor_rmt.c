@@ -19,6 +19,7 @@
 #include "kinematics.h"
 #include "esp_timer.h"
 #include "esp_adc/adc_oneshot.h"
+#include "mcp23017.h"
 
 #define STEP_MOTOR_ENABLE_LEVEL  0 // DRV8825 is enabled on low level
 #define STEP_MOTOR_SPIN_DIR_CLOCKWISE 0
@@ -37,8 +38,26 @@ volatile bool motor2_busy = false;
 volatile bool motor1_ready = false;
 volatile bool motor2_ready = false;
 
+// Tracking do deslocamento para a aquisição de dados do acelerómetro
+volatile float current_target_pos_x = 0.0f;
+volatile float current_target_pos_y = 0.0f;
+
 // Handle global partilhado do ADC1 para ambas as tasks
 static adc_oneshot_unit_handle_t s_adc1_handle = NULL;
+
+// Helper para controlar os LEDs no expansor MCP23017 via I2C
+static uint8_t mcp_port_a_state = 0;
+static void set_motor_led(int motor_id, bool state) {
+    if (!mcp_handle) return;
+    if (motor_id == 1) { // LED do Motor 1 no Pino A0
+        if (state) mcp_port_a_state |= (1 << 0);
+        else mcp_port_a_state &= ~(1 << 0);
+    } else if (motor_id == 2) { // LED do Motor 2 no Pino A1
+        if (state) mcp_port_a_state |= (1 << 1);
+        else mcp_port_a_state &= ~(1 << 1);
+    }
+    mcp23017_write_reg(mcp_handle, MCP23017_GPIOA, mcp_port_a_state);
+}
 
 struct stepper_rmt_context_t {
     uint8_t gpio_en;
@@ -370,6 +389,7 @@ esp_err_t stepper_rmt_run_realtime_sine_profile(stepper_rmt_context_t *ctx, floa
     int64_t start_time_us = esp_timer_get_time();
     int64_t duration_us = (int64_t)(duration_s * 1000000.0f);
     rmt_transmit_config_t tx_config = { .loop_count = 0 };
+    volatile float *target_pos_ptr = (ctx->gpio_en == 5) ? &current_target_pos_x : &current_target_pos_y;
 
     // CASE 1: Rotação Contínua (Curso Máximo)
     if (target_p2p_mm >= max_p2p - 0.1f) {
@@ -384,6 +404,9 @@ esp_err_t stepper_rmt_run_realtime_sine_profile(stepper_rmt_context_t *ctx, floa
             if (freq_hz < 0.1f) freq_hz = 0.1f; // Evita divisões por zero e previne crash no RMT
             uint32_t speed_hz = (uint32_t)(table_config->stepper.microsteps_per_rev * freq_hz);
             
+            float current_t = (esp_timer_get_time() - start_time_us) / 1000000.0f;
+            *target_pos_ptr = (target_p2p_mm / 2.0f) * sinf(2.0f * PI_MATH * freq_hz * current_t);
+
             // Transmite um pequeno bloco (aprox 100ms) à velocidade atual antes de ler novamente
             uint32_t chunk_steps = (uint32_t)(speed_hz * 0.1f);
             if (chunk_steps == 0) chunk_steps = 1;
@@ -414,6 +437,9 @@ esp_err_t stepper_rmt_run_realtime_sine_profile(stepper_rmt_context_t *ctx, floa
             float freq_hz = min_hz + ((float)adc_val / 4095.0f) * (max_hz - min_hz);
             
             if (freq_hz < 0.1f) freq_hz = 0.1f; // Evita divisões por zero e previne crash no RMT
+            
+            float current_t = (esp_timer_get_time() - start_time_us) / 1000000.0f;
+            *target_pos_ptr = (target_p2p_mm / 2.0f) * sinf(2.0f * PI_MATH * freq_hz * current_t);
 
             float T = 1.0f / freq_hz;
             float dt = (T / 4.0f) / Q_SEGMENTS;
@@ -792,14 +818,14 @@ esp_err_t stepper_rmt_run_sweep_profile(stepper_rmt_context_t *ctx, float target
 
 // Procura e devolve o caminho do primeiro ficheiro .bin no disco
 bool get_stored_sismo_file(char* filepath_out, size_t max_len) {
-    DIR *dir = opendir("/storage");
+    DIR *dir = opendir("/storage/input");
     if (!dir) return false;
     
     struct dirent *ent;
     bool found = false;
     while ((ent = readdir(dir)) != NULL) {
         if (strstr(ent->d_name, ".bin") != NULL) {
-            snprintf(filepath_out, max_len, "/storage/%s", ent->d_name);
+            snprintf(filepath_out, max_len, "/storage/input/%s", ent->d_name);
             found = true;
             break;
         }
@@ -847,6 +873,7 @@ esp_err_t stepper_rmt_run_file_profile(stepper_rmt_context_t *ctx, const char* f
     #define CHUNK_SIZE 100
     float target_pos_chunk[CHUNK_SIZE];
     uint32_t points_left = num_points;
+    volatile float *target_pos_ptr = (ctx->gpio_en == 5) ? &current_target_pos_x : &current_target_pos_y;
 
     while (points_left > 0) {
         uint32_t to_read = (points_left > CHUNK_SIZE) ? CHUNK_SIZE : points_left;
@@ -856,6 +883,7 @@ esp_err_t stepper_rmt_run_file_profile(stepper_rmt_context_t *ctx, const char* f
         
         for (uint32_t i = 0; i < read_count; i++) {
             float target_pos_mm = target_pos_chunk[i];
+            *target_pos_ptr = target_pos_mm;
             
             // 1. Inverse Kinematics
             float target_angle = kinematics_calc_inverse_position_relative_90(&table_config->axis, target_pos_mm);
@@ -941,7 +969,7 @@ void stepper_rmt_task_1(void *arg)
 
         if (motor1 && current_profile != 0) {
             motor1_busy = true; // Levanta a bandeira de ocupado
-            gpio_set_level(GPIO_NUM_25, 1); // Turn LED on
+            set_motor_led(1, true); // Liga o LED no MCP23017 (A0)
 
             switch (current_profile){
                 case 1:
@@ -1194,7 +1222,7 @@ void stepper_rmt_task_1(void *arg)
                 }
             }
         }
-        gpio_set_level(GPIO_NUM_25, 0); // Turn LED off
+        set_motor_led(1, false); // Apaga o LED no MCP23017 (A0)
         // Essential delay to yield CPU to other tasks when idle
         vTaskDelay(pdMS_TO_TICKS(10));
     }
@@ -1229,13 +1257,13 @@ void stepper_rmt_task_2(void *arg)
         // Smaller STEPPER
         uint8_t current_profile = nextion_profile;
         // Fallback: If the physical button is pressed without an active test, execute Case 6 by default
-        if (gpio_get_level(GPIO_NUM_21) == 0) {
-            current_profile = (nextion_profile == 0) ? 6 : nextion_profile;
-        }
+        // if (gpio_get_level(GPIO_NUM_21) == 0) {
+        //     current_profile = (nextion_profile == 0) ? 6 : nextion_profile;
+        // }
 
         if (motor2 && current_profile != 0) {
             motor2_busy = true; // Levanta a bandeira de ocupado
-            gpio_set_level(GPIO_NUM_26, 1); // Turn LED on
+            set_motor_led(2, true); // Liga o LED no MCP23017 (A1)
             
             switch (current_profile){
                 case 1:
@@ -1461,7 +1489,7 @@ void stepper_rmt_task_2(void *arg)
                 }
             }
         }
-        gpio_set_level(GPIO_NUM_26, 0); // Turn LED off
+        set_motor_led(2, false); // Apaga o LED no MCP23017 (A1)
         // Essential delay to yield CPU to other tasks when idle
         vTaskDelay(pdMS_TO_TICKS(10));
     }
