@@ -1385,6 +1385,8 @@ void stepper_rmt_task_2(void *arg)
                     //  Example: Amplitude 32.0mm, Duration: 10 Segundos, Dynamic frequency manage by ADC between 0.5Hz to 5.0Hz        
                     //stepper_rmt_run_realtime_sine_profile(motor2, 33.0f, 10.0f, s_adc1_handle, ADC_CHANNEL_3, 0.5f, 5.0f, &my_table);  
                     
+                    motor2_ready = false;
+                    ESP_LOGI(TAG, "Motor 2: Performing preparatory Auto-Homing...");
                     stepper_rmt_homing(motor2, 27, 33, &table_config_y);
                     motor2_ready = true;
 

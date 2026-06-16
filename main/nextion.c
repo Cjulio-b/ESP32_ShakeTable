@@ -294,6 +294,9 @@ void rxFromNextion(const uint8_t *data, int len)
                         config_manager_save('x', &table_config_x);
                         config_manager_save('y', &table_config_y);
                         
+                        // Restore hardware pins back to the default
+                        set_steppers_microsteps(32);
+                        
                         ESP_LOGI("NEXTION", "Default configuration saved to flash memory (NVS)!");
                         
                         nextion_send_command("Param0.val=0");
@@ -321,8 +324,20 @@ void rxFromNextion(const uint8_t *data, int len)
                 SEND_PARAM("x5", table_config_y.axis.rod_length_mm, 10.0f);
                 SEND_PARAM("x6", table_config_x.stepper.step_angle_deg, 10.0f);
                 SEND_PARAM("x7", table_config_y.stepper.step_angle_deg, 10.0f);
-                SEND_PARAM("x8", table_config_x.stepper.microsteps, 10.0f);
-                SEND_PARAM("x9", table_config_y.stepper.microsteps, 10.0f);
+                
+                // Envia o Index da Combobox (0, 1, 2 ou 3) em vez do valor absoluto * 10
+                int cb0_idx = 3, cb1_idx = 3; // Default para 32 microsteps (index 3)
+                if (table_config_x.stepper.microsteps == 4) cb0_idx = 0;
+                else if (table_config_x.stepper.microsteps == 8) cb0_idx = 1;
+                else if (table_config_x.stepper.microsteps == 16) cb0_idx = 2;
+                
+                if (table_config_y.stepper.microsteps == 4) cb1_idx = 0;
+                else if (table_config_y.stepper.microsteps == 8) cb1_idx = 1;
+                else if (table_config_y.stepper.microsteps == 16) cb1_idx = 2;
+
+                SEND_PARAM("cb0", cb0_idx, 1.0f); // scale 1.0f porque queremos o numero exato
+                SEND_PARAM("cb1", cb1_idx, 1.0f);
+                
                 SEND_PARAM("x10", table_config_x.stepper.gear_ratio, 100.0f);
                 SEND_PARAM("x11", table_config_y.stepper.gear_ratio, 100.0f);
                 
@@ -777,16 +792,36 @@ void rxFromNextion(const uint8_t *data, int len)
                     if (recv_crc == calc_crc) {
                         ESP_LOGI("NEXTION", "✅ CRC OK - New physical configuration received!");
                         
+                        // Converte o valor recebido do HMI (que pode ser o Index da combobox 0,1,2,3 ou o valor multiplicado por 10)
+                        uint16_t real_micro_x = 32;
+                        if (micro_x == 0) real_micro_x = 4;
+                        else if (micro_x == 1) real_micro_x = 8;
+                        else if (micro_x == 2) real_micro_x = 16;
+                        else if (micro_x == 3) real_micro_x = 32;
+                        else if (micro_x >= 40) real_micro_x = micro_x / 10;
+                        else real_micro_x = micro_x;
+
+                        uint16_t real_micro_y = 32;
+                        if (micro_y == 0) real_micro_y = 4;
+                        else if (micro_y == 1) real_micro_y = 8;
+                        else if (micro_y == 2) real_micro_y = 16;
+                        else if (micro_y == 3) real_micro_y = 32;
+                        else if (micro_y >= 40) real_micro_y = micro_y / 10;
+                        else real_micro_y = micro_y;
+
                         // Update global structs
                         kinematics_init_axis(&table_config_x.axis, p2p_x / 10.0f, crank_x / 10.0f, rod_x / 10.0f);
-                        kinematics_init_stepper(&table_config_x.stepper, step_x / 10.0f, gear_x / 100.0f, micro_x / 10);
+                        kinematics_init_stepper(&table_config_x.stepper, step_x / 10.0f, gear_x / 100.0f, real_micro_x);
                         
                         kinematics_init_axis(&table_config_y.axis, p2p_y / 10.0f, crank_y / 10.0f, rod_y / 10.0f);
-                        kinematics_init_stepper(&table_config_y.stepper, step_y / 10.0f, gear_y / 100.0f, micro_y / 10);
+                        kinematics_init_stepper(&table_config_y.stepper, step_y / 10.0f, gear_y / 100.0f, real_micro_y);
                         
                         // Save to NVS
                         config_manager_save('x', &table_config_x);
                         config_manager_save('y', &table_config_y);
+                        
+                        // Update MCP23017 hardware output states dynamically based on the received value
+                        set_steppers_microsteps(real_micro_x);
                         
                         ESP_LOGI("NEXTION", "New configuration saved to flash memory (NVS)!");
                         sendAckToNextion(160); // ACK: OK

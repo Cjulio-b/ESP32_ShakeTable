@@ -29,6 +29,7 @@ i2c_master_bus_handle_t i2c_bus_2_handle = NULL;
 i2c_master_dev_handle_t mcp_handle = NULL;
 i2c_master_dev_handle_t adxl_table_handle = NULL;
 i2c_master_dev_handle_t adxl_specimen_handle = NULL;
+static uint8_t mcp_port_b_state = 0;
 
 void scan_i2c_bus(i2c_master_bus_handle_t bus_handle, const char* bus_name) {
     ESP_LOGI("I2C_SCAN", "Starting scanner on bus: %s", bus_name);
@@ -74,7 +75,9 @@ void init_i2c_system(void) {
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "Timeout/Failed to configure MCP23017! Check SDA/SCL and RST pins.");
         } else {
+            mcp23017_write_reg(mcp_handle, MCP23017_IODIRB, 0x00); // Configura o BANK B como OUTPUTS
             mcp23017_write_reg(mcp_handle, MCP23017_GPIOA, 0x00); // Garante que os LEDs (A0 e A1) começam apagados
+            mcp23017_write_reg(mcp_handle, MCP23017_GPIOB, 0x00); // Estado base 0 no PORT B
             ESP_LOGI(TAG, "MCP23017 setup completed successfully!");
         }
     }
@@ -92,6 +95,28 @@ void init_i2c_system(void) {
     if (adxl345_init(i2c_bus_2_handle, ADXL345_I2C_ADDR_GND, &adxl_specimen_handle) == ESP_OK) {
         ESP_LOGI(TAG, "Specimen Accelerometer initialized on BUS 2!");
     }
+}
+
+// =========================================================================
+// Configura os pinos M0, M1 e M2 dos drivers via I2C (MCP23017 - Port B)
+// =========================================================================
+void set_steppers_microsteps(uint16_t microsteps) {
+    if (!mcp_handle) return;
+    
+    uint8_t bits = 0;
+    switch(microsteps) {
+        case 4:  bits = (0 << 0) | (1 << 1) | (0 << 2); break; // b0=low, b1=high, b2=low -> 4
+        case 8:  bits = (1 << 0) | (1 << 1) | (0 << 2); break; // b0=high, b1=high, b2=low -> 8
+        case 16: bits = (0 << 0) | (0 << 1) | (1 << 2); break; // b0=low, b1=low, b2=high -> 16
+        case 32: bits = (1 << 0) | (1 << 1) | (1 << 2); break; // b0=high, b1=high, b2=high -> 32
+        default: bits = (1 << 0) | (1 << 1) | (1 << 2); break; // default safety (32)
+    }
+
+    mcp_port_b_state &= ~0b00000111; // Limpa apenas os 3 primeiros bits do Port B
+    mcp_port_b_state |= bits;        // Aplica o novo estado
+    
+    mcp23017_write_reg(mcp_handle, MCP23017_GPIOB, mcp_port_b_state);
+    ESP_LOGI(TAG, "MCP23017: Resolução Microstep atualizada para %d (Port B: 0x%02X)", microsteps, mcp_port_b_state);
 }
 
 // =========================================================================
@@ -293,6 +318,9 @@ void app_main(void)
 	start_webserver(); //start HTTP server
 	config_manager_init(); // Carrega configurações da NVS ou usa defaults
 	init_i2c_system(); // Inicia I2C e deteta o MCP23017
+
+	// Atualiza o hardware com o microstep carregado da memória
+	set_steppers_microsteps(table_config_x.stepper.microsteps);
 
 	// --- Kinematics Structure Test ---
 	

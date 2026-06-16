@@ -80,6 +80,7 @@ httpd_handle_t start_webserver(void);
 
 // I2C functions ------------------------------------------------
 void init_i2c_system(void);
+void set_steppers_microsteps(uint16_t microsteps);
 
 // NVS Configuration Manager functions --------------------------
 #include "config_manager.h"
