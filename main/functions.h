@@ -80,7 +80,7 @@ httpd_handle_t start_webserver(void);
 
 // I2C functions ------------------------------------------------
 void init_i2c_system(void);
-void set_steppers_microsteps(uint16_t microsteps);
+void set_all_steppers_microsteps(uint16_t micro_x, uint16_t micro_y);
 
 // NVS Configuration Manager functions --------------------------
 #include "config_manager.h"
@@ -100,6 +100,12 @@ void txToNextion(void);
 void nextion_cmd_syntax(const char *objname, const char *datatype, const char *value);
 uint16_t nextion_crc16_modbus(const uint8_t *data, size_t len);
 void sendAckToNextion(int ackmsg);
+void nextion_set_current_page(uint8_t page);
+void nextion_notify_wifi_connected(void);
+void nextion_notify_wifi_disconnected(void);
+void nextion_notify_upload_success(void);
+void nextion_notify_upload_error(void);
+void nextion_notify_test_result_available(void);
 void return_data_from_nextion(const uint8_t *buff, int idx);
 
 // STEPPER MOTOR functions -----------------------------------------------

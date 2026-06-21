@@ -41,6 +41,14 @@ bool nextion_sweep_isBid_x = false;
 bool nextion_sweep_isBid_y = false;
 bool parameters_recv = false;
 
+static volatile uint8_t nextion_current_page = 0;
+
+/* void nextion_set_current_page(uint8_t page)
+{
+    nextion_current_page = page;
+    ESP_LOGI("NEXTION", "Current page set to %u", page);
+} */
+
 // CRC-16 Modbus (polynomial 0xA001, initial 0xFFFF)
 uint16_t nextion_crc16_modbus(const uint8_t *data, size_t len) {
     uint16_t crc = 0xFFFF;
@@ -123,8 +131,96 @@ void sendAckToNextion(int ackmsg)
             nextion_send_command("va0.val=167"); // ACK FILE NOT FOUND (0xA7)
             ESP_LOGW("NEXTION", "↩️ File for playback not found in memory");
             break;
+        // Menu config ACKs for HMI Nextion
+        case 201:
+            nextion_send_command("va0.val=201"); // ACK FILE OPEN ERROR (0xC9)
+            ESP_LOGW("NEXTION", "↩️ Current Shake Table configuration sent.");
+            break;
+        case 202:
+            nextion_send_command("va0.val=202"); // ACK FILE OPEN ERROR (0xCA)
+            ESP_LOGW("NEXTION", "↩️ New configuration received and applied to the Shake Table.");
+            break;
+        case 203:
+            nextion_send_command("va0.val=203"); // ACK FILE OPEN ERROR (0xCB)
+            ESP_LOGW("NEXTION", "↩️ Error while saving new configuration to flash memory (NVS).");
+            break;
+        case 204:
+            nextion_send_command("va0.val=204"); // ACK FILE OPEN ERROR (0xCC)
+            ESP_LOGW("NEXTION", "↩️ Factory default configuration restored and applied to the Shake Table.");
+            break;
+        // Connectivity ACKs for HMI Nextion
+        case 301:
+            nextion_send_command("va0.val=301"); // ACK WIFI CONNECTED (0x12D)
+            ESP_LOGI("NEXTION", "↩️ ESP32 connected to WiFi network.");
+            break;
+        case 302:
+            nextion_send_command("va0.val=302"); // ACK WIFI DISCONNECTED (0x12E)
+            ESP_LOGW("NEXTION", "↩️ ESP32 disconnected from WiFi network.");
+            break;
+        case 310:
+            nextion_send_command("va0.val=310"); // ACK HTTP SERVER STARTED (0x12F)
+            ESP_LOGI("NEXTION", "↩️ File sismic profile uploaded to ESP32 via HTTP Server.");
+            break;
+        case 311:
+            nextion_send_command("va0.val=311"); // ACK HTTP SERVER ERROR (0x130)
+            ESP_LOGW("NEXTION", "↩️ Error during file upload via HTTP Server.");
+            break;
+        case 312:
+            nextion_send_command("va0.val=312"); // ACK FILE DELETED (0x131)
+            ESP_LOGI("NEXTION", "↩️ CSV file ready to be downloaded in HTTP server.");
+            break;
         default:
             ESP_LOGW("NEXTION", "Unknown ACK: %d", ackmsg);
+    }
+}
+
+void nextion_notify_wifi_connected(void)
+{
+    bool is_valid_page = (nextion_current_page == 2 || nextion_current_page == 3 || nextion_current_page == 4 || nextion_current_page == 5 || nextion_current_page == 6 || nextion_current_page == 7);
+    if (is_valid_page) {
+        sendAckToNextion(301);
+    } else {
+        ESP_LOGI("NEXTION", "WiFi connected, but current page %u is not 7 or 9. ACK 301 skipped.", nextion_current_page);
+    }
+}
+
+void nextion_notify_wifi_disconnected(void)
+{
+    bool is_valid_page = (nextion_current_page == 2 || nextion_current_page == 3 || nextion_current_page == 4 || nextion_current_page == 5 || nextion_current_page == 6 || nextion_current_page == 7);
+    if (is_valid_page) {
+        sendAckToNextion(302);
+    } else {
+        ESP_LOGI("NEXTION", "WiFi disconnected, but current page %u is not 7 or 9. ACK 302 skipped.", nextion_current_page);
+    }
+}
+
+void nextion_notify_upload_success(void)
+{
+    bool is_valid_page = (nextion_current_page == 7);
+    if (is_valid_page) {
+        sendAckToNextion(310);
+    } else {
+        ESP_LOGI("NEXTION", "Upload success, but current page %u is not 7. ACK 310 skipped.", nextion_current_page);
+    }
+}
+
+void nextion_notify_upload_error(void)
+{
+    bool is_valid_page = (nextion_current_page == 7);
+    if (is_valid_page) {
+        sendAckToNextion(311);
+    } else {
+        ESP_LOGI("NEXTION", "Upload error, but current page %u is not 7. ACK 311 skipped.", nextion_current_page);
+    }
+}
+
+void nextion_notify_test_result_available(void)
+{
+    bool is_valid_page = (nextion_current_page == 7 || nextion_current_page == 9);
+    if (is_valid_page) {
+        sendAckToNextion(312);
+    } else {
+        ESP_LOGI("NEXTION", "Test result available, but current page %u is not 7 or 9. ACK 312 skipped.", nextion_current_page);
     }
 }
 
@@ -207,6 +303,28 @@ void rxFromNextion(const uint8_t *data, int len)
                 uint8_t page = buffer[1];
                 uint8_t component_id = buffer[2];
                 uint8_t event = buffer[3];
+                
+                if (page==1){
+                    if(component_id==4){ // icon to enter Sinewave profile
+                        nextion_current_page=2;
+                    }
+                    else if(component_id==3){ // icon to enter multi-step profile
+                        nextion_current_page=3;
+                    }
+                    else if(component_id==6){ // icon to enter trapezoidal profile
+                        nextion_current_page=4;
+                    }
+                    else if(component_id==7){ // icon to enter real-time sine (analog potentiometer) profile
+                        nextion_current_page=5;
+                    }
+                    else if(component_id==5){ // icon to enter sweep/chirp profile
+                        nextion_current_page=6;
+                    }
+                    else if(component_id==2){ // icon to enter 'from file' profile
+                        nextion_current_page=7;
+                    }
+                }
+                //nextion_set_current_page(page);
 
                 ESP_LOGI("NEXTION", "Touch Event: page=%d, comp=%d, event=%d",
                          page, component_id, event);
@@ -280,7 +398,7 @@ void rxFromNextion(const uint8_t *data, int len)
                      }
                 }
                 else if (page == 8) {
-                    if (component_id == 31 && event == 0) { // <-- DEFAULT BUTTON ID (0x1F = 31)
+                    if (component_id == 31 && event == 0) { // <-- DEFAULT configuration BUTTON ID (0x1F = 31)
                         ESP_LOGI("NEXTION", "Default Settings Button Pressed! Restoring defaults to NVS...");
                         
                         // Reset global structs to default values
@@ -295,54 +413,55 @@ void rxFromNextion(const uint8_t *data, int len)
                         config_manager_save('y', &table_config_y);
                         
                         // Restore hardware pins back to the default
-                        set_steppers_microsteps(32);
+                        set_all_steppers_microsteps(32,32);
                         
                         ESP_LOGI("NEXTION", "Default configuration saved to flash memory (NVS)!");
                         
-                        nextion_send_command("Param0.val=0");
+                       sendAckToNextion(204); // ACK FACTORY DEFAULTS RESTORED
+                    }
+                    if (component_id == 32 && event == 0) { // <-- Request Configuration BUTTON ID (0x20 = 32)
+                        ESP_LOGI("NEXTION", "Request for current configuration received.");
+                        
+                        char value_str[16];
+
+                        #define SEND_PARAM(obj, val, scale) \
+                            snprintf(value_str, sizeof(value_str), "%d", (int)(val * scale)); \
+                            nextion_cmd_syntax(obj, "val", value_str); \
+                            vTaskDelay(pdMS_TO_TICKS(15)); // Delay to prevent Nextion buffer overflow
+
+                        SEND_PARAM("x0", table_config_x.axis.peak_to_peak_disp_mm, 10.0f);
+                        SEND_PARAM("x1", table_config_y.axis.peak_to_peak_disp_mm, 10.0f);
+                        SEND_PARAM("x2", table_config_x.axis.crank_radius_mm, 10.0f);
+                        SEND_PARAM("x3", table_config_y.axis.crank_radius_mm, 10.0f);
+                        SEND_PARAM("x4", table_config_x.axis.rod_length_mm, 10.0f);
+                        SEND_PARAM("x5", table_config_y.axis.rod_length_mm, 10.0f);
+                        SEND_PARAM("x6", table_config_x.stepper.step_angle_deg, 10.0f);
+                        SEND_PARAM("x7", table_config_y.stepper.step_angle_deg, 10.0f);
+                        
+                        // Envia o Index da Combobox (0, 1, 2 ou 3) em vez do valor absoluto * 10
+                        int cb0_idx = 3, cb1_idx = 3; // Default para 32 microsteps (index 3)
+                        if (table_config_x.stepper.microsteps == 4) cb0_idx = 0;
+                        else if (table_config_x.stepper.microsteps == 8) cb0_idx = 1;
+                        else if (table_config_x.stepper.microsteps == 16) cb0_idx = 2;
+                        
+                        if (table_config_y.stepper.microsteps == 4) cb1_idx = 0;
+                        else if (table_config_y.stepper.microsteps == 8) cb1_idx = 1;
+                        else if (table_config_y.stepper.microsteps == 16) cb1_idx = 2;
+
+                        SEND_PARAM("cb0", cb0_idx, 1.0f); // scale 1.0f porque queremos o numero exato
+                        SEND_PARAM("cb1", cb1_idx, 1.0f);
+                        
+                        SEND_PARAM("x10", table_config_x.stepper.gear_ratio, 100.0f);
+                        SEND_PARAM("x11", table_config_y.stepper.gear_ratio, 100.0f);
+                        
+                        nextion_send_command("va0.val=201");
+                        ESP_LOGI("NEXTION", "Current configuration sent to Nextion HMI.");
+                       
                     }
                 }
 
             }
             // End Touch Event (0x65) -------------------------------------------------------------
-            // Custom Request for Settings: "55 55 FF FF FF"
-            else if (buffer[0] == 0x55 && buffer[1] == 0x55) {
-                ESP_LOGI("NEXTION", "Request for current configuration received (0x55 0x55)");
-                
-                char value_str[16];
-
-                #define SEND_PARAM(obj, val, scale) \
-                    snprintf(value_str, sizeof(value_str), "%d", (int)(val * scale)); \
-                    nextion_cmd_syntax(obj, "val", value_str); \
-                    vTaskDelay(pdMS_TO_TICKS(15)); // Delay to prevent Nextion buffer overflow
-
-                SEND_PARAM("x0", table_config_x.axis.peak_to_peak_disp_mm, 10.0f);
-                SEND_PARAM("x1", table_config_y.axis.peak_to_peak_disp_mm, 10.0f);
-                SEND_PARAM("x2", table_config_x.axis.crank_radius_mm, 10.0f);
-                SEND_PARAM("x3", table_config_y.axis.crank_radius_mm, 10.0f);
-                SEND_PARAM("x4", table_config_x.axis.rod_length_mm, 10.0f);
-                SEND_PARAM("x5", table_config_y.axis.rod_length_mm, 10.0f);
-                SEND_PARAM("x6", table_config_x.stepper.step_angle_deg, 10.0f);
-                SEND_PARAM("x7", table_config_y.stepper.step_angle_deg, 10.0f);
-                
-                // Envia o Index da Combobox (0, 1, 2 ou 3) em vez do valor absoluto * 10
-                int cb0_idx = 3, cb1_idx = 3; // Default para 32 microsteps (index 3)
-                if (table_config_x.stepper.microsteps == 4) cb0_idx = 0;
-                else if (table_config_x.stepper.microsteps == 8) cb0_idx = 1;
-                else if (table_config_x.stepper.microsteps == 16) cb0_idx = 2;
-                
-                if (table_config_y.stepper.microsteps == 4) cb1_idx = 0;
-                else if (table_config_y.stepper.microsteps == 8) cb1_idx = 1;
-                else if (table_config_y.stepper.microsteps == 16) cb1_idx = 2;
-
-                SEND_PARAM("cb0", cb0_idx, 1.0f); // scale 1.0f porque queremos o numero exato
-                SEND_PARAM("cb1", cb1_idx, 1.0f);
-                
-                SEND_PARAM("x10", table_config_x.stepper.gear_ratio, 100.0f);
-                SEND_PARAM("x11", table_config_y.stepper.gear_ratio, 100.0f);
-                
-                nextion_send_command("Param0.val=1");
-            }
             
             // Shaking Table Profiles Data Packet (0x55) -------------------------------------------------------------
             else if (buffer[0] == 0x55 && buffer[1] == 0x01) {
@@ -820,16 +939,16 @@ void rxFromNextion(const uint8_t *data, int len)
                         config_manager_save('x', &table_config_x);
                         config_manager_save('y', &table_config_y);
                         
-                        // Update MCP23017 hardware output states dynamically based on the received value
-                        set_steppers_microsteps(real_micro_x);
+                        // Update MCP23017 hardware output states dynamically based on received values
+                        set_all_steppers_microsteps(real_micro_x, real_micro_y);
                         
                         ESP_LOGI("NEXTION", "New configuration saved to flash memory (NVS)!");
-                        sendAckToNextion(160); // ACK: OK
+                        sendAckToNextion(202); // ACK: OK
                         vTaskDelay(pdMS_TO_TICKS(15)); // Small pause to ensure ACK is sent before resetting the flag
-                        nextion_send_command("Param0.val=0"); // Reset control flag on HMI
+                        
                     } else {
                         ESP_LOGW("NEXTION", "❌ Invalid CRC (expected 0x%04X, received 0x%04X)", calc_crc, recv_crc);
-                        sendAckToNextion(161); // ACK ERROR
+                        sendAckToNextion(203); // ACK ERROR
                     }
                 }
             }

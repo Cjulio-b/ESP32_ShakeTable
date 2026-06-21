@@ -8,6 +8,7 @@
 #include <unistd.h>
 #include <dirent.h>
 #include "esp_http_server.h"
+#include "functions.h"
 
 #define TAG "Funcoes"
 
@@ -47,6 +48,7 @@ esp_err_t upload_handler(httpd_req_t *req) {
     FILE *fd = fopen(filepath, "w");
     if (!fd) {
         ESP_LOGE(TAG, "Falha ao criar o ficheiro %s", filepath);
+        nextion_notify_upload_error();
         httpd_resp_send_500(req);
         return ESP_FAIL;
     }
@@ -61,6 +63,7 @@ esp_err_t upload_handler(httpd_req_t *req) {
                 continue; // Tenta novamente
             }
             fclose(fd);
+            nextion_notify_upload_error();
             ESP_LOGE(TAG, "Erro ao receber ficheiro durante o upload!");
             httpd_resp_send_500(req);
             return ESP_FAIL;
@@ -70,7 +73,7 @@ esp_err_t upload_handler(httpd_req_t *req) {
         remaining -= received;
     }
     fclose(fd);
-    
+    nextion_notify_upload_success();
     ESP_LOGI(TAG, "Upload concluido com sucesso. Tamanho recebido: %d bytes", req->content_len);
     httpd_resp_sendstr(req, "Ficheiro guardado no ESP32 com sucesso!");
     return ESP_OK;

@@ -50,6 +50,9 @@ For using menuconfig in powershell:
 
     idf.py menuconfig
 
-
-
+NOTE: For converting resolution of image or video
+- install ffmpeg via cmd
+- open cmd and write
+-Example:
+    C:\Users\cjulio\Documents\cjulio\ESP32_ShakeTable\HMI_NEXTION\imagens\utility>ffmpeg -i 1_Header.png -vf "scale=95:116" -c:a copy 1_Header_95_196.png
 

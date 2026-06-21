@@ -98,25 +98,37 @@ void init_i2c_system(void) {
 }
 
 // =========================================================================
-// Configura os pinos M0, M1 e M2 dos drivers via I2C (MCP23017 - Port B)
+// Converte valor de microstepping em 3 bits (helper for set_all_steppers_microsteps)
 // =========================================================================
-void set_steppers_microsteps(uint16_t microsteps) {
+static uint8_t get_microstep_bits(uint16_t microsteps) {
+    switch(microsteps) {
+        case 4:  return 0b010; // b0=low, b1=high, b2=low -> 4
+        case 8:  return 0b011; // b0=high, b1=high, b2=low -> 8
+        case 16: return 0b100; // b0=low, b1=low, b2=high -> 16
+        case 32: return 0b111; // b0=high, b1=high, b2=high -> 32
+        default: return 0b111; // default safety (32)
+    }
+}
+
+// =========================================================================
+// Configura os pinos M0, M1, M2 (Motor X) e M3, M4, M5 (Motor Y) via I2C
+// Motor X: bits 0-2 (b0, b1, b2)
+// Motor Y: bits 3-5 (b3, b4, b5)
+// =========================================================================
+void set_all_steppers_microsteps(uint16_t micro_x, uint16_t micro_y) {
     if (!mcp_handle) return;
     
-    uint8_t bits = 0;
-    switch(microsteps) {
-        case 4:  bits = (0 << 0) | (1 << 1) | (0 << 2); break; // b0=low, b1=high, b2=low -> 4
-        case 8:  bits = (1 << 0) | (1 << 1) | (0 << 2); break; // b0=high, b1=high, b2=low -> 8
-        case 16: bits = (0 << 0) | (0 << 1) | (1 << 2); break; // b0=low, b1=low, b2=high -> 16
-        case 32: bits = (1 << 0) | (1 << 1) | (1 << 2); break; // b0=high, b1=high, b2=high -> 32
-        default: bits = (1 << 0) | (1 << 1) | (1 << 2); break; // default safety (32)
-    }
-
-    mcp_port_b_state &= ~0b00000111; // Limpa apenas os 3 primeiros bits do Port B
-    mcp_port_b_state |= bits;        // Aplica o novo estado
+    uint8_t bits_x = get_microstep_bits(micro_x);  // bits 0-2
+    uint8_t bits_y = get_microstep_bits(micro_y);  // bits 3-5
+    
+    // Limpa bits relevantes (0-5) e aplica os novos valores
+    mcp_port_b_state &= ~0b00111111; // Limpa bits 0-5
+    mcp_port_b_state |= bits_x;                    // Bits 0-2 para Motor X
+    mcp_port_b_state |= (bits_y << 3);             // Bits 3-5 para Motor Y
     
     mcp23017_write_reg(mcp_handle, MCP23017_GPIOB, mcp_port_b_state);
-    ESP_LOGI(TAG, "MCP23017: Resolução Microstep atualizada para %d (Port B: 0x%02X)", microsteps, mcp_port_b_state);
+    ESP_LOGI(TAG, "MCP23017: Motor X=%d uSteps (b0-b2=0x%X), Motor Y=%d uSteps (b3-b5=0x%X), Port B: 0x%02X", 
+             micro_x, bits_x, micro_y, bits_y, mcp_port_b_state);
 }
 
 // =========================================================================
@@ -300,6 +312,7 @@ void accelerometer_task(void *arg)
                 fclose(f_csv);
                 f_csv = NULL;
                 ESP_LOGI("ACCEL_TASK", "Gravação do CSV concluída e ficheiro fechado com sucesso!");
+                nextion_notify_test_result_available();
             }
             current_target_pos_x = 0.0f; current_target_pos_y = 0.0f;
         }
@@ -319,8 +332,8 @@ void app_main(void)
 	config_manager_init(); // Carrega configurações da NVS ou usa defaults
 	init_i2c_system(); // Inicia I2C e deteta o MCP23017
 
-	// Atualiza o hardware com o microstep carregado da memória
-	set_steppers_microsteps(table_config_x.stepper.microsteps);
+	// Atualiza o hardware com os microsteps carregados da memória para ambos os motores
+	set_all_steppers_microsteps(table_config_x.stepper.microsteps, table_config_y.stepper.microsteps);
 
 	// --- Kinematics Structure Test ---
 	
@@ -354,9 +367,11 @@ void app_main(void)
 	// Dedicated task to monitor structural dynamics through the two ADXL345 I2C accelerometers
 	xTaskCreate(accelerometer_task, "accel_task", 4096, NULL, configMAX_PRIORITIES - 12, NULL);
 
+	// FreeRTOS main loop: Keep the main task alive with periodic vTaskDelay
+	// The actual work happens in the 4 tasks created above
+	// vTaskDelay prevents watchdog timeout and allows FreeRTOS scheduler to run
 	while (1)
 	{	
-		//testing_led();
 		vTaskDelay(pdMS_TO_TICKS(10)); // 10ms delay
 	}
 

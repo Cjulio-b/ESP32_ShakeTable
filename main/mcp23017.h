@@ -4,7 +4,7 @@
 #include "esp_err.h"
 #include "driver/i2c_master.h"
 
-// Endereço padrão I2C do MCP23017 (quando os pinos A0, A1 e A2 estão em LOW)
+// Endereço padrão I2C do MCP23017 (quando os pinos D0, D1 e D2 estão em LOW)
 #define MCP23017_I2C_ADDR_DEFAULT 0x20
 
 // Mapeamento dos Registos do MCP23017 (assumindo IOCON.BANK = 0)

@@ -4,6 +4,7 @@
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "nvs_flash.h"
+#include "functions.h"
 
 /*#define WIFI_AP_SSID "Huzzah32_AP"
 #define WIFI_AP_PASS "12345678"
@@ -50,6 +51,22 @@ void start_wifi_ap(void)
 #define WIFI_AP_PASS "12345678"
 static const char *TAG = "WiFi_AP";
 
+static void wifi_event_handler(void* arg, esp_event_base_t event_base,
+                               int32_t event_id, void* event_data)
+{
+    if (event_base != WIFI_EVENT) {
+        return;
+    }
+
+    if (event_id == WIFI_EVENT_AP_STACONNECTED) {
+        ESP_LOGI(TAG, "STA connected to AP");
+        nextion_notify_wifi_connected();
+    } else if (event_id == WIFI_EVENT_AP_STADISCONNECTED) {
+        ESP_LOGI(TAG, "STA disconnected from AP");
+        nextion_notify_wifi_disconnected();
+    }
+}
+
 void start_wifi_ap(void) {
     // 1️⃣ Inicializa NVS
     esp_err_t ret = nvs_flash_init();
@@ -62,6 +79,8 @@ void start_wifi_ap(void) {
     // 2️⃣ Inicializa TCP/IP stack
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
+                                                      &wifi_event_handler, NULL, NULL));
     esp_netif_create_default_wifi_ap();
 
     // 3️⃣ Inicializa Wi-Fi
