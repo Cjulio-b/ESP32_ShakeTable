@@ -35,10 +35,13 @@ void scan_i2c_bus(i2c_master_bus_handle_t bus_handle, const char* bus_name) {
     ESP_LOGI("I2C_SCAN", "Starting scanner on bus: %s", bus_name);
     int found = 0;
     for (uint8_t addr = 1; addr < 127; addr++) {
-        esp_err_t err = i2c_master_probe(bus_handle, addr, 100);
+        esp_err_t err = i2c_master_probe(bus_handle, addr, 20); // Reduzido de 100 para 20ms
         if (err == ESP_OK) {
             ESP_LOGI("I2C_SCAN", " -> Device detected at address: 0x%02X", addr);
             found++;
+        } else if (err == ESP_ERR_TIMEOUT) {
+            ESP_LOGE("I2C_SCAN", " -> Bus is stuck or timed out! Aborting scan on %s to prevent log spam.", bus_name);
+            break; // Se deu timeout, o barramento está preso (ex: curto-circuito). Abortamos para não spammar 127 vezes.
         }
     }
     if (found == 0) {
@@ -74,6 +77,8 @@ void init_i2c_system(void) {
         esp_err_t err = mcp23017_write_reg(mcp_handle, MCP23017_IODIRA, 0x00);
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "Timeout/Failed to configure MCP23017! Check SDA/SCL and RST pins.");
+            i2c_master_bus_rm_device(mcp_handle);
+            mcp_handle = NULL;
         } else {
             mcp23017_write_reg(mcp_handle, MCP23017_IODIRB, 0x00); // Configura o BANK B como OUTPUTS
             mcp23017_write_reg(mcp_handle, MCP23017_GPIOA, 0x00); // Garante que os LEDs (A0 e A1) começam apagados
@@ -214,6 +219,74 @@ static float get_theoretical_position(char axis, int profile, float t) {
     return amp * sinf(2.0f * M_PI * freq * t);
 }
 
+// =========================================================================
+// CSV Recording Task (Background Buffer Writer)
+// =========================================================================
+typedef struct {
+    float t_sec;
+    float target_x;
+    float target_y;
+    float t_x;
+    float t_y;
+    float t_z;
+    float s_x;
+    float s_y;
+    float s_z;
+} csv_record_t;
+
+QueueHandle_t csv_queue;
+
+void csv_writer_task(void *arg) {
+    FILE *f_csv = NULL;
+    csv_record_t record;
+    int items_to_flush = 0;
+    
+    ESP_LOGI("CSV_WRITER", "CSV Writer task started.");
+    
+    while(1) {
+        if (xQueueReceive(csv_queue, &record, portMAX_DELAY)) {
+            // Check for special sentinel value to open/close file
+            if (record.t_sec < 0.0f) {
+                if (record.target_x == 1.0f) {
+                    // Open file
+                    if (f_csv == NULL) {
+                        f_csv = fopen("/storage/output/resultados.csv", "w");
+                        if (f_csv) {
+                            fprintf(f_csv, "Tempo_s,Target_X_mm,Target_Y_mm,Acc_Table_X_g,Acc_Table_Y_g,Acc_Table_Z_g,Acc_Specimen_X_g,Acc_Specimen_Y_g,Acc_Specimen_Z_g\n");
+                            ESP_LOGI("CSV_WRITER", "Opened CSV file for writing.");
+                        }
+                    }
+                } else if (record.target_x == 0.0f) {
+                    // Close file
+                    if (f_csv != NULL) {
+                        fflush(f_csv);
+                        fclose(f_csv);
+                        f_csv = NULL;
+                        ESP_LOGI("CSV_WRITER", "Closed CSV file.");
+                        nextion_notify_test_result_available();
+                    }
+                }
+            } else {
+                // Write normal record
+                if (f_csv != NULL) {
+                    fprintf(f_csv, "%.3f,%.3f,%.3f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f\n", 
+                            record.t_sec, record.target_x, record.target_y, 
+                            record.t_x, record.t_y, record.t_z, 
+                            record.s_x, record.s_y, record.s_z);
+                    items_to_flush++;
+                    
+                    // Flush every 50 records (0.5 seconds at 100Hz) to ensure data is written
+                    // without locking the flash on every single reading.
+                    if (items_to_flush >= 50) {
+                        fflush(f_csv);
+                        items_to_flush = 0;
+                    }
+                }
+            }
+        }
+    }
+}
+
 void accelerometer_task(void *arg)
 {
     float t_x = 0.0f, t_y = 0.0f, t_z = 0.0f; // Table accelerations
@@ -244,8 +317,8 @@ void accelerometer_task(void *arg)
     // ---------------------------------
 
     int print_counter = 0;
-    FILE *f_csv = NULL;
     int64_t start_record_time = 0;
+    bool is_recording = false;
 
     while (1) {
         // Only read and process if an active profile is running (to save CPU)
@@ -271,29 +344,41 @@ void accelerometer_task(void *arg)
             s_y -= off_sy;
             s_z -= off_sz;
 
-            // --- Gravação do CSV no LittleFS a 100Hz ---
-            if (f_csv == NULL) {
-                f_csv = fopen("/storage/output/resultados.csv", "w");
-                if (f_csv) {
-                    fprintf(f_csv, "Tempo_s,Target_X_mm,Target_Y_mm,Acc_Table_X_g,Acc_Table_Y_g,Acc_Table_Z_g,Acc_Specimen_X_g,Acc_Specimen_Y_g,Acc_Specimen_Z_g\n");
-                    start_record_time = esp_timer_get_time();
-                    ESP_LOGI("ACCEL_TASK", "A gravar dados no disco...");
-                }
+            if (!is_recording) {
+                // Enviar comando para abrir o ficheiro
+                csv_record_t cmd = {.t_sec = -1.0f, .target_x = 1.0f};
+                xQueueSend(csv_queue, &cmd, 0);
+                start_record_time = esp_timer_get_time();
+                is_recording = true;
+                ESP_LOGI("ACCEL_TASK", "Signaled CSV Writer to start.");
             }
             
-            if (f_csv) {
-                float t_sec = (float)(esp_timer_get_time() - start_record_time) / 1000000.0f;
-                
-                float csv_target_x = current_target_pos_x;
-                float csv_target_y = current_target_pos_y;
-                
-                // Para os perfis determinísticos (1, 2, 3 e 5), calcular a onda matemática perfeitamente suave!
-                if (nextion_profile == 1 || nextion_profile == 2 || nextion_profile == 3 || nextion_profile == 5) {
-                    csv_target_x = get_theoretical_position('x', nextion_profile, t_sec);
-                    csv_target_y = get_theoretical_position('y', nextion_profile, t_sec);
-                }
-                
-                fprintf(f_csv, "%.3f,%.3f,%.3f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f\n", t_sec, csv_target_x, csv_target_y, t_x, t_y, t_z, s_x, s_y, s_z);
+            float t_sec = (float)(esp_timer_get_time() - start_record_time) / 1000000.0f;
+            
+            float csv_target_x = current_target_pos_x;
+            float csv_target_y = current_target_pos_y;
+            
+            // Para os perfis determinísticos (1, 2, 3 e 5), calcular a onda matemática perfeitamente suave!
+            if (nextion_profile == 1 || nextion_profile == 2 || nextion_profile == 3 || nextion_profile == 5) {
+                csv_target_x = get_theoretical_position('x', nextion_profile, t_sec);
+                csv_target_y = get_theoretical_position('y', nextion_profile, t_sec);
+            }
+            
+            csv_record_t rec = {
+                .t_sec = t_sec,
+                .target_x = csv_target_x,
+                .target_y = csv_target_y,
+                .t_x = t_x,
+                .t_y = t_y,
+                .t_z = t_z,
+                .s_x = s_x,
+                .s_y = s_y,
+                .s_z = s_z
+            };
+            
+            // Enviar amostra para a Queue (Tempo limite 0, se a Queue estiver cheia ignoramos amostra para n bloquear motor)
+            if (xQueueSend(csv_queue, &rec, 0) != pdTRUE) {
+                ESP_LOGW("ACCEL_TASK", "CSV Queue Full! Dropped sample.");
             }
 
             // Test Print: Imprimir a cada ~500ms (50 loops de 10ms) para não bloquear a UART
@@ -307,12 +392,12 @@ void accelerometer_task(void *arg)
                 vTaskDelay(pdMS_TO_TICKS(100));
             }
         } else {
-            // Se o perfil acabou, fecha o ficheiro em segurança
-            if (f_csv != NULL) {
-                fclose(f_csv);
-                f_csv = NULL;
-                ESP_LOGI("ACCEL_TASK", "Gravação do CSV concluída e ficheiro fechado com sucesso!");
-                nextion_notify_test_result_available();
+            // Se o perfil acabou, sinaliza a writer task para fechar o ficheiro
+            if (is_recording) {
+                csv_record_t cmd = {.t_sec = -1.0f, .target_x = 0.0f};
+                xQueueSend(csv_queue, &cmd, pdMS_TO_TICKS(100));
+                is_recording = false;
+                ESP_LOGI("ACCEL_TASK", "Signaled CSV Writer to stop.");
             }
             current_target_pos_x = 0.0f; current_target_pos_y = 0.0f;
         }
@@ -350,22 +435,23 @@ void app_main(void)
 	*/
 	// --- End of Kinematics Structure Test ---
 
-	vTaskDelay(pdMS_TO_TICKS(3000)); // 3 seconds delay
+	vTaskDelay(pdMS_TO_TICKS(1000)); // 1 second delay
 
-	xTaskCreate(rx_task, "uart_rx_task", UART_TASK_STACK_SIZE, NULL, configMAX_PRIORITIES - 15, &rxTaskHandle);
-	xTaskCreate(tx_task, "uart_tx_task", UART_TASK_STACK_SIZE, NULL, configMAX_PRIORITIES - 16, &txTaskHandle);
-	// Task to monitor stack usage
-    xTaskCreate(monitor_task, "monitor_task", 4096, NULL, configMAX_PRIORITIES - 20, NULL);
+	csv_queue = xQueueCreate(100, sizeof(csv_record_t)); // Buffer for 1 second of data at 100Hz
 
-	// Task para controlar o stepper motor L298N - NOT USED, USE RMT INSTEAD
-	//xTaskCreate(stepper_task, "stepper_task", 4096, NULL, configMAX_PRIORITIES - 14, NULL);
+	// Tarefas presas ao Core 0 (Comunicações e Background)
+	xTaskCreatePinnedToCore(rx_task, "uart_rx_task", UART_TASK_STACK_SIZE, NULL, configMAX_PRIORITIES - 15, &rxTaskHandle, 0);
+	xTaskCreatePinnedToCore(tx_task, "uart_tx_task", UART_TASK_STACK_SIZE, NULL, configMAX_PRIORITIES - 16, &txTaskHandle, 0);
+	//xTaskCreatePinnedToCore(csv_writer_task, "csv_writer_task", 4096, NULL, configMAX_PRIORITIES - 18, NULL, 0);
 
 	// Tasks to control the stepper motors with DRV8825 and RMT independently
-	xTaskCreate(stepper_rmt_task_1, "stepper_rmt_task_1", 4096, NULL, configMAX_PRIORITIES - 10, NULL);
-	xTaskCreate(stepper_rmt_task_2, "stepper_rmt_task_2", 4096, NULL, configMAX_PRIORITIES - 10, NULL);
+	// Presas ao Core 1 para máxima estabilidade e imunidade a interrupções do sistema (WiFi/SPI Flash)
+	xTaskCreatePinnedToCore(stepper_rmt_task_1, "stepper_rmt_task_1", 4096, NULL, configMAX_PRIORITIES - 5, NULL, 1);
+	xTaskCreatePinnedToCore(stepper_rmt_task_2, "stepper_rmt_task_2", 4096, NULL, configMAX_PRIORITIES - 5, NULL, 1);
 
 	// Dedicated task to monitor structural dynamics through the two ADXL345 I2C accelerometers
-	xTaskCreate(accelerometer_task, "accel_task", 4096, NULL, configMAX_PRIORITIES - 12, NULL);
+	// Presa ao Core 0
+	//xTaskCreatePinnedToCore(accelerometer_task, "accel_task", 4096, NULL, configMAX_PRIORITIES - 12, NULL, 0);
 
 	// FreeRTOS main loop: Keep the main task alive with periodic vTaskDelay
 	// The actual work happens in the 4 tasks created above

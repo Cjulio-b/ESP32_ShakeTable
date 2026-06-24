@@ -3,7 +3,7 @@
 
 static const char *TAG = "MCP23017";
 
-#define I2C_MASTER_TIMEOUT_MS 1000
+#define I2C_MASTER_TIMEOUT_MS 50
 
 esp_err_t mcp23017_init(i2c_master_bus_handle_t bus_handle, uint8_t device_addr, i2c_master_dev_handle_t *mcp_handle)
 {

@@ -329,17 +329,17 @@ void rxFromNextion(const uint8_t *data, int len)
                 ESP_LOGI("NEXTION", "Touch Event: page=%d, comp=%d, event=%d",
                          page, component_id, event);
                 if (page==2){
-                    if (component_id == 16 && event == 0 && parameters_recv) { // START button Sinewave Profile
+                    if (component_id == 12 && event == 0 && parameters_recv) { // START button Sinewave Profile
                         ESP_LOGI("NEXTION", "Start SineWave Profile Selected!");
                         sendAckToNextion(162); // ACK HOMING (The table will prepare first)
                         nextion_profile = 1; // Sinewave Profile 
-                    } else if (component_id == 17 && event == 0) { // STOP button Sinewave Profile
+                    } else if (component_id == 13 && event == 0) { // STOP button Sinewave Profile
                         ESP_LOGI("NEXTION", "Stop SineWave Profile Selected!");
                         sendAckToNextion(164); // ACK MOTION END
                         nextion_profile = 0; // STOP signal (aborts motor loop)
                         parameters_recv = false;
                     }
-                } else if (page == 3) { // <-- REPLACE 3 WITH THE MULTI-STEP PAGE ID IN THE NEXTION EDITOR
+                } else if (page == 3) { // MULTI-STEP PAGE ID
                     if (component_id == 27 && event == 0 && parameters_recv) { // START button Multi-Step Profile (Replace 16 with the button ID)
                         ESP_LOGI("NEXTION", "Start Multi-Step Profile Selected!");
                         sendAckToNextion(162); // ACK HOMING
@@ -351,11 +351,11 @@ void rxFromNextion(const uint8_t *data, int len)
                         parameters_recv = false;
                     }
                 } else if (page == 4) {
-                    if (component_id == 17 && event == 0 && parameters_recv) { // <-- ID BOTÃO START
+                    if (component_id == 15 && event == 0 && parameters_recv) { // <-- ID BOTÃO START
                         ESP_LOGI("NEXTION", "Start Trapezoidal Profile Selected!");
                         sendAckToNextion(162); // ACK HOMING
                         nextion_profile = 3; // Trapezoidal Profile 
-                    } else if (component_id == 18 && event == 0) { // <-- ID BOTÃO STOP
+                    } else if (component_id == 16 && event == 0) { // <-- ID BOTÃO STOP
                         ESP_LOGI("NEXTION", "Stop Trapezoidal Profile Selected!");
                         sendAckToNextion(164); // ACK MOTION END
                         nextion_profile = 0; // STOP signal
@@ -419,7 +419,7 @@ void rxFromNextion(const uint8_t *data, int len)
                         
                        sendAckToNextion(204); // ACK FACTORY DEFAULTS RESTORED
                     }
-                    if (component_id == 32 && event == 0) { // <-- Request Configuration BUTTON ID (0x20 = 32)
+                    if (component_id == 32 && event == 1) { // <-- Request Configuration BUTTON ID (0x20 = 32)
                         ESP_LOGI("NEXTION", "Request for current configuration received.");
                         
                         char value_str[16];
@@ -443,10 +443,12 @@ void rxFromNextion(const uint8_t *data, int len)
                         if (table_config_x.stepper.microsteps == 4) cb0_idx = 0;
                         else if (table_config_x.stepper.microsteps == 8) cb0_idx = 1;
                         else if (table_config_x.stepper.microsteps == 16) cb0_idx = 2;
+                        else if (table_config_x.stepper.microsteps == 32) cb0_idx = 3;
                         
                         if (table_config_y.stepper.microsteps == 4) cb1_idx = 0;
                         else if (table_config_y.stepper.microsteps == 8) cb1_idx = 1;
                         else if (table_config_y.stepper.microsteps == 16) cb1_idx = 2;
+                        else if (table_config_y.stepper.microsteps == 32) cb1_idx = 3;
 
                         SEND_PARAM("cb0", cb0_idx, 1.0f); // scale 1.0f porque queremos o numero exato
                         SEND_PARAM("cb1", cb1_idx, 1.0f);
@@ -456,6 +458,7 @@ void rxFromNextion(const uint8_t *data, int len)
                         
                         nextion_send_command("va0.val=201");
                         ESP_LOGI("NEXTION", "Current configuration sent to Nextion HMI.");
+                        //ESP_LOGI("NEXTION", "MICROSTEPS X: %d, MICROSTEPS Y: %d", table_config_x.stepper.microsteps, table_config_y.stepper.microsteps);
                        
                     }
                 }
