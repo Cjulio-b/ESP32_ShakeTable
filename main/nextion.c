@@ -174,7 +174,7 @@ void sendAckToNextion(int ackmsg)
     }
 }
 
-void nextion_notify_wifi_connected(void)
+/* void nextion_notify_wifi_connected(void)
 {
     bool is_valid_page = (nextion_current_page == 2 || nextion_current_page == 3 || nextion_current_page == 4 || nextion_current_page == 5 || nextion_current_page == 6 || nextion_current_page == 7);
     if (is_valid_page) {
@@ -182,9 +182,9 @@ void nextion_notify_wifi_connected(void)
     } else {
         ESP_LOGI("NEXTION", "WiFi connected, but current page %u is not 7 or 9. ACK 301 skipped.", nextion_current_page);
     }
-}
+} */
 
-void nextion_notify_wifi_disconnected(void)
+/* void nextion_notify_wifi_disconnected(void)
 {
     bool is_valid_page = (nextion_current_page == 2 || nextion_current_page == 3 || nextion_current_page == 4 || nextion_current_page == 5 || nextion_current_page == 6 || nextion_current_page == 7);
     if (is_valid_page) {
@@ -193,8 +193,9 @@ void nextion_notify_wifi_disconnected(void)
         ESP_LOGI("NEXTION", "WiFi disconnected, but current page %u is not 7 or 9. ACK 302 skipped.", nextion_current_page);
     }
 }
+ */
 
-void nextion_notify_upload_success(void)
+/* void nextion_notify_upload_success(void)
 {
     bool is_valid_page = (nextion_current_page == 7);
     if (is_valid_page) {
@@ -202,9 +203,9 @@ void nextion_notify_upload_success(void)
     } else {
         ESP_LOGI("NEXTION", "Upload success, but current page %u is not 7. ACK 310 skipped.", nextion_current_page);
     }
-}
+} */
 
-void nextion_notify_upload_error(void)
+/* void nextion_notify_upload_error(void)
 {
     bool is_valid_page = (nextion_current_page == 7);
     if (is_valid_page) {
@@ -212,9 +213,9 @@ void nextion_notify_upload_error(void)
     } else {
         ESP_LOGI("NEXTION", "Upload error, but current page %u is not 7. ACK 311 skipped.", nextion_current_page);
     }
-}
+} */
 
-void nextion_notify_test_result_available(void)
+/* void nextion_notify_test_result_available(void)
 {
     bool is_valid_page = (nextion_current_page == 7 || nextion_current_page == 9);
     if (is_valid_page) {
@@ -222,7 +223,7 @@ void nextion_notify_test_result_available(void)
     } else {
         ESP_LOGI("NEXTION", "Test result available, but current page %u is not 7 or 9. ACK 312 skipped.", nextion_current_page);
     }
-}
+} */
 
 void return_data_from_nextion(const uint8_t *buff, int idx)
 {

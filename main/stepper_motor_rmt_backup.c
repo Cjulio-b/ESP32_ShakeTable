@@ -333,7 +333,9 @@ esp_err_t stepper_rmt_run_sine_profile(stepper_rmt_context_t *ctx, float target_
 
             q_steps[i] = steps;
             if (steps > 0) {
-                q_speeds[i] = (uint32_t)((float)steps / dt);
+                float effective_dt = dt - (steps * 0.000285f);
+                if (effective_dt < 0.001f) effective_dt = 0.001f;
+                q_speeds[i] = (uint32_t)((float)steps / effective_dt);
                 if (q_speeds[i] < 10) q_speeds[i] = 10; // RMT safety limit: minimum frequency
             } else {
                 q_speeds[i] = 0;
@@ -380,11 +382,6 @@ esp_err_t stepper_rmt_run_sine_profile(stepper_rmt_context_t *ctx, float target_
                     for (uint32_t s = 0; s < steps; s++) {
                         rmt_transmit(ctx->motor_chan, ctx->uniform_motor_encoder, &q_speeds[idx], sizeof(q_speeds[idx]), &tx_config);
                     }
-                    rmt_tx_wait_all_done(ctx->motor_chan, -1);
-                } else {
-                    uint32_t delay_us = (uint32_t)(dt * 1000000.0f);
-                    if (delay_us > 10000) { vTaskDelay(pdMS_TO_TICKS(delay_us / 1000)); }
-                    else { esp_rom_delay_us(delay_us); }
                 }
             }
             // Wait for this movement to finish before reversing direction
@@ -492,7 +489,9 @@ esp_err_t stepper_rmt_run_realtime_sine_profile(stepper_rmt_context_t *ctx, floa
 
                 q_steps[i] = steps;
                 if (steps > 0) {
-                    q_speeds[i] = (uint32_t)((float)steps / dt);
+                    float effective_dt = dt - (steps * 0.000285f);
+                if (effective_dt < 0.001f) effective_dt = 0.001f;
+                q_speeds[i] = (uint32_t)((float)steps / effective_dt);
                     if (q_speeds[i] < 10) q_speeds[i] = 10;
                 } else {
                     q_speeds[i] = 0;
@@ -612,7 +611,9 @@ esp_err_t stepper_rmt_run_trapezoidal_freq_profile(stepper_rmt_context_t *ctx, f
                 uint32_t steps = (uint32_t)floorf(accum);
                 accum -= steps;
                 q_steps[i] = steps;
-                q_speeds[i] = steps > 0 ? (uint32_t)((float)steps / dt) : 0;
+                float effective_dt = dt - (steps * 0.000285f);
+                if (effective_dt < 0.001f) effective_dt = 0.001f;
+                q_speeds[i] = steps > 0 ? (uint32_t)((float)steps / effective_dt) : 0;
                 if (q_speeds[i] > 0 && q_speeds[i] < 10) q_speeds[i] = 10;
             }
 
@@ -620,16 +621,8 @@ esp_err_t stepper_rmt_run_trapezoidal_freq_profile(stepper_rmt_context_t *ctx, f
             bool is_decel = (q % 4 == 0 || q % 4 == 2);
             for (int i = 0; i < num_segments; i++) {
                 int idx = is_decel ? i : (num_segments - 1 - i);
-                uint32_t steps = q_steps[idx];
-                if (steps > 0 && q_speeds[idx] > 0) {
-                    for (uint32_t s = 0; s < steps; s++) {
-                        rmt_transmit(ctx->motor_chan, ctx->uniform_motor_encoder, &q_speeds[idx], sizeof(q_speeds[idx]), &tx_config);
-                    }
-                    rmt_tx_wait_all_done(ctx->motor_chan, -1);
-                } else {
-                    uint32_t delay_us = (uint32_t)(dt * 1000000.0f);
-                    if (delay_us > 10000) { vTaskDelay(pdMS_TO_TICKS(delay_us / 1000)); }
-                    else { esp_rom_delay_us(delay_us); }
+                for (uint32_t s = 0; s < q_steps[idx]; s++) {
+                    rmt_transmit(ctx->motor_chan, ctx->uniform_motor_encoder, &q_speeds[idx], sizeof(q_speeds[idx]), &tx_config);
                 }
             }
             rmt_tx_wait_all_done(ctx->motor_chan, -1);
@@ -744,7 +737,9 @@ esp_err_t stepper_rmt_run_multistep_freq_profile(stepper_rmt_context_t *ctx, flo
                 uint32_t steps = (uint32_t)floorf(accum);
                 accum -= steps;
                 q_steps[i] = steps;
-                q_speeds[i] = steps > 0 ? (uint32_t)((float)steps / dt) : 0;
+                float effective_dt = dt - (steps * 0.000285f);
+                if (effective_dt < 0.001f) effective_dt = 0.001f;
+                q_speeds[i] = steps > 0 ? (uint32_t)((float)steps / effective_dt) : 0;
                 if (q_speeds[i] > 0 && q_speeds[i] < 10) q_speeds[i] = 10;
             }
 
@@ -752,16 +747,8 @@ esp_err_t stepper_rmt_run_multistep_freq_profile(stepper_rmt_context_t *ctx, flo
             bool is_decel = (q % 4 == 0 || q % 4 == 2);
             for (int i = 0; i < num_segments; i++) {
                 int idx = is_decel ? i : (num_segments - 1 - i);
-                uint32_t steps = q_steps[idx];
-                if (steps > 0 && q_speeds[idx] > 0) {
-                    for (uint32_t s = 0; s < steps; s++) {
-                        rmt_transmit(ctx->motor_chan, ctx->uniform_motor_encoder, &q_speeds[idx], sizeof(q_speeds[idx]), &tx_config);
-                    }
-                    rmt_tx_wait_all_done(ctx->motor_chan, -1);
-                } else {
-                    uint32_t delay_us = (uint32_t)(dt * 1000000.0f);
-                    if (delay_us > 10000) { vTaskDelay(pdMS_TO_TICKS(delay_us / 1000)); }
-                    else { esp_rom_delay_us(delay_us); }
+                for (uint32_t s = 0; s < q_steps[idx]; s++) {
+                    rmt_transmit(ctx->motor_chan, ctx->uniform_motor_encoder, &q_speeds[idx], sizeof(q_speeds[idx]), &tx_config);
                 }
             }
             rmt_tx_wait_all_done(ctx->motor_chan, -1);
@@ -857,7 +844,9 @@ esp_err_t stepper_rmt_run_sweep_profile(stepper_rmt_context_t *ctx, float target
                 uint32_t steps = (uint32_t)floorf(accum);
                 accum -= steps;
                 q_steps[i] = steps;
-                q_speeds[i] = steps > 0 ? (uint32_t)((float)steps / dt) : 0;
+                float effective_dt = dt - (steps * 0.000285f);
+                if (effective_dt < 0.001f) effective_dt = 0.001f;
+                q_speeds[i] = steps > 0 ? (uint32_t)((float)steps / effective_dt) : 0;
                 if (q_speeds[i] > 0 && q_speeds[i] < 10) q_speeds[i] = 10;
             }
 
@@ -865,16 +854,8 @@ esp_err_t stepper_rmt_run_sweep_profile(stepper_rmt_context_t *ctx, float target
             bool is_decel = (q % 4 == 0 || q % 4 == 2);
             for (int i = 0; i < num_segments; i++) {
                 int idx = is_decel ? i : (num_segments - 1 - i);
-                uint32_t steps = q_steps[idx];
-                if (steps > 0 && q_speeds[idx] > 0) {
-                    for (uint32_t s = 0; s < steps; s++) {
-                        rmt_transmit(ctx->motor_chan, ctx->uniform_motor_encoder, &q_speeds[idx], sizeof(q_speeds[idx]), &tx_config);
-                    }
-                    rmt_tx_wait_all_done(ctx->motor_chan, -1);
-                } else {
-                    uint32_t delay_us = (uint32_t)(dt * 1000000.0f);
-                    if (delay_us > 10000) { vTaskDelay(pdMS_TO_TICKS(delay_us / 1000)); }
-                    else { esp_rom_delay_us(delay_us); }
+                for (uint32_t s = 0; s < q_steps[idx]; s++) {
+                    rmt_transmit(ctx->motor_chan, ctx->uniform_motor_encoder, &q_speeds[idx], sizeof(q_speeds[idx]), &tx_config);
                 }
             }
             rmt_tx_wait_all_done(ctx->motor_chan, -1);

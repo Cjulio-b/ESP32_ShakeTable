@@ -191,23 +191,14 @@ void GPIO_init(void)
 {
     /* Configure GPIOs as needed */
 
-    //INPUT GPIO
-    gpio_set_direction(GPIO_NUM_21, GPIO_MODE_INPUT);  // Button Stepper Motor1
-	gpio_set_pull_mode(GPIO_NUM_21, GPIO_PULLUP_ONLY); // Enable pull-up resistor
-
-	gpio_set_direction(GPIO_NUM_14, GPIO_MODE_INPUT); // Button Stepper Motor2
-	gpio_set_pull_mode(GPIO_NUM_14, GPIO_PULLUP_ONLY); // Enable pull-up resistor
-		
-	//OUTPUT GPIOs
-	// gpio_set_direction(GPIO_NUM_26, GPIO_MODE_OUTPUT); // LEDs transferidos para MCP23017 (I2C)
-	// gpio_set_direction(GPIO_NUM_25, GPIO_MODE_OUTPUT); 
-
-	//Stepper Motor GPIOs - L298N
-	/*gpio_config_t io_conf = {
-    	.mode = GPIO_MODE_OUTPUT,
-    	.pin_bit_mask = (1ULL<<GPIO_NUM_13) | (1ULL<<GPIO_NUM_12) | (1ULL<<GPIO_NUM_27) | (1ULL<<GPIO_NUM_33),
-	};
-	gpio_config(&io_conf);*/
-
-
+    // Pino de Sincronismo (SYNC) para o MCU 2
+    gpio_config_t sync_conf = {
+        .pin_bit_mask = (1ULL << GPIO_NUM_21),
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_down_en = 0,
+        .pull_up_en = 0,
+        .intr_type = GPIO_INTR_DISABLE
+    };
+    gpio_config(&sync_conf);
+    gpio_set_level(GPIO_NUM_21, 0); // Ensaio parado no arranque
 }

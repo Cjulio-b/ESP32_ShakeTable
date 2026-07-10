@@ -12,11 +12,6 @@
 
 #define TAG "Funcoes"
 
-// GPIOs que queremos monitorizar
-#define GPIO_OUTPUT GPIO_NUM_26
-#define GPIO_INPUT  GPIO_NUM_21
-
-
 // ========================
 // Handler para Upload de Ficheiros
 // ========================
@@ -48,7 +43,8 @@ esp_err_t upload_handler(httpd_req_t *req) {
     FILE *fd = fopen(filepath, "w");
     if (!fd) {
         ESP_LOGE(TAG, "Falha ao criar o ficheiro %s", filepath);
-        nextion_notify_upload_error();
+        //nextion_notify_upload_error();
+        sendAckToNextion(311); // ACK: Error during file upload
         httpd_resp_send_500(req);
         return ESP_FAIL;
     }
@@ -63,7 +59,8 @@ esp_err_t upload_handler(httpd_req_t *req) {
                 continue; // Tenta novamente
             }
             fclose(fd);
-            nextion_notify_upload_error();
+            //nextion_notify_upload_error();
+            sendAckToNextion(311); // ACK: Error during file upload
             ESP_LOGE(TAG, "Erro ao receber ficheiro durante o upload!");
             httpd_resp_send_500(req);
             return ESP_FAIL;
@@ -73,7 +70,8 @@ esp_err_t upload_handler(httpd_req_t *req) {
         remaining -= received;
     }
     fclose(fd);
-    nextion_notify_upload_success();
+    //nextion_notify_upload_success();
+    sendAckToNextion(310); // ACK: Upload concluido com sucesso
     ESP_LOGI(TAG, "Upload concluido com sucesso. Tamanho recebido: %d bytes", req->content_len);
     httpd_resp_sendstr(req, "Ficheiro guardado no ESP32 com sucesso!");
     return ESP_OK;
@@ -116,44 +114,6 @@ esp_err_t fileinfo_handler(httpd_req_t *req) {
 }
 
 // ========================
-// Handlers do Acelerómetro
-// ========================
-esp_err_t resultinfo_handler(httpd_req_t *req) {
-    char resp[128];
-    struct stat st;
-    if (stat("/storage/output/resultados.csv", &st) == 0) {
-        snprintf(resp, sizeof(resp), "{\"exists\": true, \"size\": %ld}", st.st_size);
-    } else {
-        snprintf(resp, sizeof(resp), "{\"exists\": false}");
-    }
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
-    return ESP_OK;
-}
-
-esp_err_t download_handler(httpd_req_t *req) {
-    FILE *fd = fopen("/storage/output/resultados.csv", "r");
-    if (!fd) {
-        ESP_LOGE(TAG, "Falha ao abrir resultados.csv");
-        httpd_resp_send_404(req);
-        return ESP_FAIL;
-    }
-
-    httpd_resp_set_type(req, "text/csv");
-    // O nome do anexo será alterado via Javascript no browser
-    httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=resultados.csv");
-
-    char buf[1024];
-    size_t read_bytes;
-    while ((read_bytes = fread(buf, 1, sizeof(buf), fd)) > 0) {
-        httpd_resp_send_chunk(req, buf, read_bytes);
-    }
-    httpd_resp_send_chunk(req, NULL, 0); // End of file
-    fclose(fd);
-    return ESP_OK;
-}
-
-// ========================
 // Página HTML principal
 // ========================
 esp_err_t index_handler(httpd_req_t *req) {
@@ -184,13 +144,6 @@ esp_err_t index_handler(httpd_req_t *req) {
         "<p id='status' style='font-weight:bold;color:#333;'></p>"
         "<pre id='logOutput' style='text-align:left; font-size:0.8em; background:#eee; padding:10px; border-radius:5px; display:none; overflow-x:auto;'></pre>"
         "</div>"
-        "<div class='upload-section'>"
-        "<h3>Output: Resultados de Ensaio</h3>"
-        "<div style='margin-bottom:15px; padding:10px; background:#e0e0e0; border-radius:5px;'>"
-        "Dados na Memória: <span id='resName'>A verificar...</span>"
-        "</div>"
-        "<p style='font-size:0.9em; color:#555;'>Dados dos acelerómetros e posições gravados a 100Hz do último ensaio executado.</p>"
-        "<button onclick='downloadResult()' style='background:#4CAF50; color:white; border:none; border-radius:5px;'>Descarregar CSV (Excel)</button>"
         "</div>"
         "<script>"
         "async function checkFile() {"
@@ -202,35 +155,6 @@ esp_err_t index_handler(httpd_req_t *req) {
         "  } catch(e) { document.getElementById('fileName').innerText = 'Erro ao verificar'; }"
         "}"
         "checkFile();"
-        "async function checkResult() {"
-        "  try {"
-        "    const res = await fetch('/resultinfo');"
-        "    const data = await res.json();"
-        "    if(data.exists) document.getElementById('resName').innerHTML = '<b>resultados.csv</b> (' + (data.size/1024).toFixed(2) + ' KB)';"
-        "    else document.getElementById('resName').innerHTML = '<i>nenhum ensaio concluído</i>';"
-        "  } catch(e) { document.getElementById('resName').innerText = 'Erro ao verificar'; }"
-        "}"
-        "checkResult(); setInterval(checkResult, 3000);"
-        "async function downloadResult() {"
-        "  try {"
-        "    const res = await fetch('/download');"
-        "    if (!res.ok) throw new Error('Not found');"
-        "    const blob = await res.blob();"
-        "    const d = new Date();"
-        "    const pad = (n) => n.toString().padStart(2, '0');"
-        "    const filename = 'ensaio_' + pad(d.getDate()) + pad(d.getMonth()+1) + d.getFullYear() + '_' + pad(d.getHours()) + pad(d.getMinutes()) + '.csv';"
-        "    const url = window.URL.createObjectURL(blob);"
-        "    const a = document.createElement('a');"
-        "    a.href = url;"
-        "    a.download = filename;"
-        "    document.body.appendChild(a);"
-        "    a.click();"
-        "    a.remove();"
-        "    window.URL.revokeObjectURL(url);"
-        "  } catch(e) {"
-        "    alert('Não existem dados na memória! Faça um ensaio primeiro.');"
-        "  }"
-        "}"
         "async function uploadFile() {"
         "  const el = document.getElementById('fileInput');"
         "  if(el.files.length === 0) return alert('Selecione um ficheiro!');"
@@ -337,24 +261,6 @@ httpd_handle_t start_webserver(void) {
             .user_ctx = NULL
         };
         httpd_register_uri_handler(server, &fileinfo_uri);
-        
-        // Rota de Info dos Resultados
-        httpd_uri_t resultinfo_uri = {
-            .uri = "/resultinfo",
-            .method = HTTP_GET,
-            .handler = resultinfo_handler,
-            .user_ctx = NULL
-        };
-        httpd_register_uri_handler(server, &resultinfo_uri);
-
-        // Rota de Download CSV
-        httpd_uri_t download_uri = {
-            .uri = "/download",
-            .method = HTTP_GET,
-            .handler = download_handler,
-            .user_ctx = NULL
-        };
-        httpd_register_uri_handler(server, &download_uri);
 
         ESP_LOGI(TAG, "Servidor HTTP iniciado!");
     } else {

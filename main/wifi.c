@@ -47,7 +47,7 @@ void start_wifi_ap(void)
 }*/
 
 // Versao 2 -----------------------
-#define WIFI_AP_SSID "Huzzah32_AP"
+#define WIFI_AP_SSID "ESP32_ShakeTable"
 #define WIFI_AP_PASS "12345678"
 static const char *TAG = "WiFi_AP";
 
@@ -60,10 +60,12 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
 
     if (event_id == WIFI_EVENT_AP_STACONNECTED) {
         ESP_LOGI(TAG, "STA connected to AP");
-        nextion_notify_wifi_connected();
+        //nextion_notify_wifi_connected();
+        sendAckToNextion(301);
     } else if (event_id == WIFI_EVENT_AP_STADISCONNECTED) {
         ESP_LOGI(TAG, "STA disconnected from AP");
-        nextion_notify_wifi_disconnected();
+        //nextion_notify_wifi_disconnected();
+        sendAckToNextion(302);
     }
 }
 

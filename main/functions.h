@@ -9,6 +9,12 @@
 #include "kinematics.h"
 #include "driver/i2c_master.h"
 
+// Hardware Pin Definitions ---------------------------
+#define UART_TELEMETRY_NUM UART_NUM_2
+#define UART_TELEMETRY_TX_PIN 26
+#define UART_TELEMETRY_RX_PIN 25
+#define SYNC_GPIO_PIN 21
+
 // GLOBAL Variables -----------------------------------
 extern bool MonitorTask;
 extern volatile bool motor1_busy;
@@ -55,8 +61,6 @@ extern bool parameters_recv;
 extern i2c_master_bus_handle_t i2c_bus_handle;
 extern i2c_master_bus_handle_t i2c_bus_2_handle;
 extern i2c_master_dev_handle_t mcp_handle;
-extern i2c_master_dev_handle_t adxl_table_handle;
-extern i2c_master_dev_handle_t adxl_specimen_handle;
 
 // Global Tracking Variables for Data Logging ---------
 extern volatile float current_target_pos_x;
@@ -86,10 +90,12 @@ void set_all_steppers_microsteps(uint16_t micro_x, uint16_t micro_y);
 #include "config_manager.h"
 
 // UART functions -----------------------------------------------
-void init_uart(void);
+void init_uart_to_Nextion(void);
+void init_uart_to_mcu2(void);
 int sendData(const char* logName, const char* data);
 void rx_task(void *arg);
 void tx_task(void *arg);
+void telemetry_rx_task(void *arg);
 void monitor_task(void *arg);
 
 //NEXTION functions -----------------------------------------------
@@ -101,11 +107,11 @@ void nextion_cmd_syntax(const char *objname, const char *datatype, const char *v
 uint16_t nextion_crc16_modbus(const uint8_t *data, size_t len);
 void sendAckToNextion(int ackmsg);
 void nextion_set_current_page(uint8_t page);
-void nextion_notify_wifi_connected(void);
-void nextion_notify_wifi_disconnected(void);
-void nextion_notify_upload_success(void);
-void nextion_notify_upload_error(void);
-void nextion_notify_test_result_available(void);
+//void nextion_notify_wifi_connected(void);
+//void nextion_notify_wifi_disconnected(void);
+//void nextion_notify_upload_success(void);
+//void nextion_notify_upload_error(void);
+//void nextion_notify_test_result_available(void);
 void return_data_from_nextion(const uint8_t *buff, int idx);
 
 // STEPPER MOTOR functions -----------------------------------------------
@@ -123,6 +129,5 @@ esp_err_t stepper_rmt_run_sweep_profile(stepper_rmt_context_t *ctx, float target
 bool get_stored_sismo_file(char* filepath_out, size_t max_len);
 void stepper_rmt_task_1(void *arg);
 void stepper_rmt_task_2(void *arg);
-void accelerometer_task(void *arg);
 
 #endif /* MAIN_FUNCTIONS_H_ */
