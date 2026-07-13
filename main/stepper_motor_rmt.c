@@ -135,16 +135,16 @@ esp_err_t stepper_rmt_run_steps(stepper_rmt_context_t *ctx, uint32_t uniform_spe
     if (!ctx) return ESP_ERR_INVALID_ARG;
 
     if (direction == true) {
-        ESP_LOGI(TAG, "Set spin direction: CLOCKWISE");
+        //ESP_LOGI(TAG, "Set spin direction: CLOCKWISE");
         gpio_set_level(ctx->gpio_dir, STEP_MOTOR_SPIN_DIR_CLOCKWISE);
     } else {
-        ESP_LOGI(TAG, "Set spin direction: COUNTERCLOCKWISE");
+        //ESP_LOGI(TAG, "Set spin direction: COUNTERCLOCKWISE");
         gpio_set_level(ctx->gpio_dir, STEP_MOTOR_SPIN_DIR_COUNTERCLOCKWISE);
     }
 
-    uint32_t steps = accel_samples + uniform_samples + decel_samples;
+    //uint32_t steps = accel_samples + uniform_samples + decel_samples;
     
-    ESP_LOGI(TAG, "Spin motor for %d steps: %d accel + %d uniform + %d decel", steps, accel_samples, uniform_samples, decel_samples);
+    //ESP_LOGI(TAG, "Spin motor for %d steps: %d accel + %d uniform + %d decel", steps, accel_samples, uniform_samples, decel_samples);
     rmt_transmit_config_t tx_config = {
         .loop_count = 0,
     };
@@ -270,6 +270,8 @@ esp_err_t stepper_rmt_run_sine_profile(stepper_rmt_context_t *ctx, float target_
     int64_t start_time_us = esp_timer_get_time();
     int64_t duration_us = (int64_t)(duration_s * 1000000.0f);
 
+    volatile float *target_pos_ptr = (ctx->gpio_en == 5) ? &current_target_pos_x : &current_target_pos_y;
+
     // CASE 1: Continuous Rotation (Maximum Amplitude)
     // For max P2P (~33mm), the crank-slider mechanism translates continuous rotation into full linear strokes.
     if (target_p2p_mm >= max_p2p - 0.1f) {
@@ -281,13 +283,10 @@ esp_err_t stepper_rmt_run_sine_profile(stepper_rmt_context_t *ctx, float target_
         while (esp_timer_get_time() - start_time_us < duration_us) {
             if (nextion_profile == 0) break;
             
-            static uint32_t debug_counter1 = 0;
-            if (debug_counter1++ % 2 == 0) {
-                float current_t = (float)(esp_timer_get_time() - start_time_us) / 1000000.0f;
-                float phase = 2.0f * PI_MATH * freq_hz * current_t;
-                float pos_mm = (target_p2p_mm / 2.0f) * sinf(phase);
-                ESP_LOGI(TAG, "Troubleshooting - Posicao Alvo Atual: %.3f mm", pos_mm);
-            }
+            float current_t = (float)(esp_timer_get_time() - start_time_us) / 1000000.0f;
+            float phase = 2.0f * PI_MATH * freq_hz * current_t;
+            float pos_mm = (target_p2p_mm / 2.0f) * sinf(phase);
+            *target_pos_ptr = pos_mm;
 
             stepper_rmt_run_steps(ctx, speed_hz, chunk_steps, 0, 0, true);
         }
@@ -307,20 +306,17 @@ esp_err_t stepper_rmt_run_sine_profile(stepper_rmt_context_t *ctx, float target_
         float s_amp = (theta_rad / (2.0f * PI_MATH)) * table_config->stepper.microsteps_per_rev;
 
         // Velocity profile generation for 1/4 of the wave cycle (0 to peak)
-        #define MAX_Q_SEGMENTS 100
-        int num_segments = (int)(s_amp / 5.0f);
-        if (num_segments > MAX_Q_SEGMENTS) num_segments = MAX_Q_SEGMENTS;
-        if (num_segments < 10) num_segments = 10;
-        uint32_t q_steps[MAX_Q_SEGMENTS];
-        uint32_t q_speeds[MAX_Q_SEGMENTS];
+        #define Q_SEGMENTS 20
+        uint32_t q_steps[Q_SEGMENTS];
+        uint32_t q_speeds[Q_SEGMENTS];
 
         float T = 1.0f / freq_hz;
-        float dt = (T / 4.0f) / num_segments;
+        float dt = (T / 4.0f) / Q_SEGMENTS;
         float accum = 0.0f;
 
-        for (int i = 0; i < num_segments; i++) {
-            float tau1 = (float)i / num_segments;
-            float tau2 = (float)(i + 1) / num_segments;
+        for (int i = 0; i < Q_SEGMENTS; i++) {
+            float tau1 = (float)i / Q_SEGMENTS;
+            float tau2 = (float)(i + 1) / Q_SEGMENTS;
 
             // The position progresses sinusoidally over time
             float s1 = s_amp * sinf((PI_MATH / 2.0f) * tau1);
@@ -356,7 +352,6 @@ esp_err_t stepper_rmt_run_sine_profile(stepper_rmt_context_t *ctx, float target_
                 ESP_LOGW(TAG, "Sine Profile abortado a meio do ensaio!");
                 break;
             }
-
             // q=0: Forward (Moving away from center to positive peak)
             // q=1: Reverse (Returning to center)
             // q=2: Reverse (Moving away from center to negative peak)
@@ -366,25 +361,19 @@ esp_err_t stepper_rmt_run_sine_profile(stepper_rmt_context_t *ctx, float target_
 
             gpio_set_level(ctx->gpio_dir, is_cw ? STEP_MOTOR_SPIN_DIR_CLOCKWISE : STEP_MOTOR_SPIN_DIR_COUNTERCLOCKWISE);
 
-            for (int i = 0; i < num_segments; i++) {
-                int idx = is_decel ? i : (num_segments - 1 - i); // Reverse speed array reading order if accelerating
+            for (int i = 0; i < Q_SEGMENTS; i++) {
+                int idx = is_decel ? i : (Q_SEGMENTS - 1 - i); // Reverse speed array reading order if accelerating
                 
-                if (i % 20 == 0) { // Troubleshooting print 5 times per quarter wave
-                    float phase = (q * (PI_MATH / 2.0f)) + (((float)i / num_segments) * (PI_MATH / 2.0f));
-                    float pos_mm = (target_p2p_mm / 2.0f) * sinf(phase);
-                    ESP_LOGI(TAG, "Troubleshooting - Posicao Alvo Atual: %.3f mm", pos_mm);
-                }
+                float phase = (q * (PI_MATH / 2.0f)) + (((float)i / Q_SEGMENTS) * (PI_MATH / 2.0f));
+                float pos_mm = (target_p2p_mm / 2.0f) * sinf(phase);
+                *target_pos_ptr = pos_mm;
 
                 uint32_t steps = q_steps[idx];
                 if (steps > 0 && q_speeds[idx] > 0) {
+                    // In RMT Uniform mode, 'rmt_transmit' must be called N times for N steps
                     for (uint32_t s = 0; s < steps; s++) {
                         rmt_transmit(ctx->motor_chan, ctx->uniform_motor_encoder, &q_speeds[idx], sizeof(q_speeds[idx]), &tx_config);
                     }
-                    rmt_tx_wait_all_done(ctx->motor_chan, -1);
-                } else {
-                    uint32_t delay_us = (uint32_t)(dt * 1000000.0f);
-                    if (delay_us > 10000) { vTaskDelay(pdMS_TO_TICKS(delay_us / 1000)); }
-                    else { esp_rom_delay_us(delay_us); }
                 }
             }
             // Wait for this movement to finish before reversing direction
@@ -451,12 +440,9 @@ esp_err_t stepper_rmt_run_realtime_sine_profile(stepper_rmt_context_t *ctx, floa
         float theta_rad = asinf(A / r);
         float s_amp = (theta_rad / (2.0f * PI_MATH)) * table_config->stepper.microsteps_per_rev;
 
-        #define MAX_Q_SEGMENTS 100
-        int num_segments = (int)(s_amp / 5.0f);
-        if (num_segments > MAX_Q_SEGMENTS) num_segments = MAX_Q_SEGMENTS;
-        if (num_segments < 10) num_segments = 10;
-        uint32_t q_steps[MAX_Q_SEGMENTS];
-        uint32_t q_speeds[MAX_Q_SEGMENTS];
+        #define Q_SEGMENTS 20
+        uint32_t q_steps[Q_SEGMENTS];
+        uint32_t q_speeds[Q_SEGMENTS];
 
         float accum = 0.0f; // Kept outside the loop to avoid losing inter-quarter precision
         int q = 0;
@@ -478,11 +464,11 @@ esp_err_t stepper_rmt_run_realtime_sine_profile(stepper_rmt_context_t *ctx, floa
             *target_pos_ptr = (target_p2p_mm / 2.0f) * sinf(phase);
 
             float T = 1.0f / freq_hz;
-            float dt = (T / 4.0f) / num_segments;
+            float dt = (T / 4.0f) / Q_SEGMENTS;
 
-            for (int i = 0; i < num_segments; i++) {
-                float tau1 = (float)i / num_segments;
-                float tau2 = (float)(i + 1) / num_segments;
+            for (int i = 0; i < Q_SEGMENTS; i++) {
+                float tau1 = (float)i / Q_SEGMENTS;
+                float tau2 = (float)(i + 1) / Q_SEGMENTS;
                 float s1 = s_amp * sinf((PI_MATH / 2.0f) * tau1);
                 float s2 = s_amp * sinf((PI_MATH / 2.0f) * tau2);
                 
@@ -504,12 +490,12 @@ esp_err_t stepper_rmt_run_realtime_sine_profile(stepper_rmt_context_t *ctx, floa
 
             gpio_set_level(ctx->gpio_dir, is_cw ? STEP_MOTOR_SPIN_DIR_CLOCKWISE : STEP_MOTOR_SPIN_DIR_COUNTERCLOCKWISE);
 
-            for (int i = 0; i < num_segments; i++) {
-                int idx = is_decel ? i : (num_segments - 1 - i);
+            for (int i = 0; i < Q_SEGMENTS; i++) {
+                int idx = is_decel ? i : (Q_SEGMENTS - 1 - i);
                 if (q_steps[idx] > 0 && q_speeds[idx] > 0) {
                     for (uint32_t s = 0; s < q_steps[idx]; s++) {
-                    rmt_transmit(ctx->motor_chan, ctx->uniform_motor_encoder, &q_speeds[idx], sizeof(q_speeds[idx]), &tx_config);
-                }
+                        rmt_transmit(ctx->motor_chan, ctx->uniform_motor_encoder, &q_speeds[idx], sizeof(q_speeds[idx]), &tx_config);
+                    }
                 }
             }
             rmt_tx_wait_all_done(ctx->motor_chan, -1);
@@ -562,7 +548,6 @@ esp_err_t stepper_rmt_run_trapezoidal_freq_profile(stepper_rmt_context_t *ctx, f
             }
             
             if (freq_hz < 0.1f) freq_hz = 0.1f; // Prevenir divisão por 0 e limites RMT
-
             uint32_t speed_hz = (uint32_t)(table_config->stepper.microsteps_per_rev * freq_hz);
             uint32_t chunk_steps = (uint32_t)(speed_hz * 0.1f);
             if(chunk_steps == 0) chunk_steps = 1;
@@ -575,12 +560,9 @@ esp_err_t stepper_rmt_run_trapezoidal_freq_profile(stepper_rmt_context_t *ctx, f
         float A = target_p2p_mm / 2.0f;
         float s_amp = (asinf(A / r) / (2.0f * PI_MATH)) * table_config->stepper.microsteps_per_rev;
 
-        #define MAX_Q_SEGMENTS 100
-        int num_segments = (int)(s_amp / 5.0f);
-        if (num_segments > MAX_Q_SEGMENTS) num_segments = MAX_Q_SEGMENTS;
-        if (num_segments < 10) num_segments = 10;
-        uint32_t q_steps[MAX_Q_SEGMENTS];
-        uint32_t q_speeds[MAX_Q_SEGMENTS];
+        #define Q_SEGMENTS 20
+        uint32_t q_steps[Q_SEGMENTS];
+        uint32_t q_speeds[Q_SEGMENTS];
         float accum = 0.0f;
         int q = 0;
 
@@ -604,10 +586,10 @@ esp_err_t stepper_rmt_run_trapezoidal_freq_profile(stepper_rmt_context_t *ctx, f
             }
             if (freq_hz < 0.1f) freq_hz = 0.1f;
 
-            float dt = (1.0f / freq_hz / 4.0f) / num_segments;
-            for (int i = 0; i < num_segments; i++) {
-                float s1 = s_amp * sinf((PI_MATH / 2.0f) * ((float)i / num_segments));
-                float s2 = s_amp * sinf((PI_MATH / 2.0f) * ((float)(i + 1) / num_segments));
+            float dt = (1.0f / freq_hz / 4.0f) / Q_SEGMENTS;
+            for (int i = 0; i < Q_SEGMENTS; i++) {
+                float s1 = s_amp * sinf((PI_MATH / 2.0f) * ((float)i / Q_SEGMENTS));
+                float s2 = s_amp * sinf((PI_MATH / 2.0f) * ((float)(i + 1) / Q_SEGMENTS));
                 accum += (s2 - s1);
                 uint32_t steps = (uint32_t)floorf(accum);
                 accum -= steps;
@@ -618,19 +600,10 @@ esp_err_t stepper_rmt_run_trapezoidal_freq_profile(stepper_rmt_context_t *ctx, f
 
             gpio_set_level(ctx->gpio_dir, (q % 4 == 0 || q % 4 == 3) ? STEP_MOTOR_SPIN_DIR_CLOCKWISE : STEP_MOTOR_SPIN_DIR_COUNTERCLOCKWISE);
             bool is_decel = (q % 4 == 0 || q % 4 == 2);
-            for (int i = 0; i < num_segments; i++) {
-                int idx = is_decel ? i : (num_segments - 1 - i);
-                uint32_t steps = q_steps[idx];
-                if (steps > 0 && q_speeds[idx] > 0) {
-                    for (uint32_t s = 0; s < steps; s++) {
-                        rmt_transmit(ctx->motor_chan, ctx->uniform_motor_encoder, &q_speeds[idx], sizeof(q_speeds[idx]), &tx_config);
-                    }
-                    rmt_tx_wait_all_done(ctx->motor_chan, -1);
-                } else {
-                    uint32_t delay_us = (uint32_t)(dt * 1000000.0f);
-                    if (delay_us > 10000) { vTaskDelay(pdMS_TO_TICKS(delay_us / 1000)); }
-                    else { esp_rom_delay_us(delay_us); }
-                }
+            for (int i = 0; i < Q_SEGMENTS; i++) {
+                int idx = is_decel ? i : (Q_SEGMENTS - 1 - i);
+                for (uint32_t s = 0; s < q_steps[idx]; s++)
+                    rmt_transmit(ctx->motor_chan, ctx->uniform_motor_encoder, &q_speeds[idx], sizeof(q_speeds[idx]), &tx_config);
             }
             rmt_tx_wait_all_done(ctx->motor_chan, -1);
             q++;
@@ -703,12 +676,9 @@ esp_err_t stepper_rmt_run_multistep_freq_profile(stepper_rmt_context_t *ctx, flo
         float A = target_p2p_mm / 2.0f;
         float s_amp = (asinf(A / r) / (2.0f * PI_MATH)) * table_config->stepper.microsteps_per_rev;
 
-        #define MAX_Q_SEGMENTS 100
-        int num_segments = (int)(s_amp / 5.0f);
-        if (num_segments > MAX_Q_SEGMENTS) num_segments = MAX_Q_SEGMENTS;
-        if (num_segments < 10) num_segments = 10;
-        uint32_t q_steps[MAX_Q_SEGMENTS];
-        uint32_t q_speeds[MAX_Q_SEGMENTS];
+        #define Q_SEGMENTS 20
+        uint32_t q_steps[Q_SEGMENTS];
+        uint32_t q_speeds[Q_SEGMENTS];
         float accum = 0.0f;
         int q = 0;
 
@@ -736,10 +706,10 @@ esp_err_t stepper_rmt_run_multistep_freq_profile(stepper_rmt_context_t *ctx, flo
             if (freq_hz < 0.1f) freq_hz = 0.1f; // Safety limit
             current_freq = freq_hz;
 
-            float dt = (1.0f / freq_hz / 4.0f) / num_segments;
-            for (int i = 0; i < num_segments; i++) {
-                float s1 = s_amp * sinf((PI_MATH / 2.0f) * ((float)i / num_segments));
-                float s2 = s_amp * sinf((PI_MATH / 2.0f) * ((float)(i + 1) / num_segments));
+            float dt = (1.0f / freq_hz / 4.0f) / Q_SEGMENTS;
+            for (int i = 0; i < Q_SEGMENTS; i++) {
+                float s1 = s_amp * sinf((PI_MATH / 2.0f) * ((float)i / Q_SEGMENTS));
+                float s2 = s_amp * sinf((PI_MATH / 2.0f) * ((float)(i + 1) / Q_SEGMENTS));
                 accum += (s2 - s1);
                 uint32_t steps = (uint32_t)floorf(accum);
                 accum -= steps;
@@ -750,18 +720,10 @@ esp_err_t stepper_rmt_run_multistep_freq_profile(stepper_rmt_context_t *ctx, flo
 
             gpio_set_level(ctx->gpio_dir, (q % 4 == 0 || q % 4 == 3) ? STEP_MOTOR_SPIN_DIR_CLOCKWISE : STEP_MOTOR_SPIN_DIR_COUNTERCLOCKWISE);
             bool is_decel = (q % 4 == 0 || q % 4 == 2);
-            for (int i = 0; i < num_segments; i++) {
-                int idx = is_decel ? i : (num_segments - 1 - i);
-                uint32_t steps = q_steps[idx];
-                if (steps > 0 && q_speeds[idx] > 0) {
-                    for (uint32_t s = 0; s < steps; s++) {
-                        rmt_transmit(ctx->motor_chan, ctx->uniform_motor_encoder, &q_speeds[idx], sizeof(q_speeds[idx]), &tx_config);
-                    }
-                    rmt_tx_wait_all_done(ctx->motor_chan, -1);
-                } else {
-                    uint32_t delay_us = (uint32_t)(dt * 1000000.0f);
-                    if (delay_us > 10000) { vTaskDelay(pdMS_TO_TICKS(delay_us / 1000)); }
-                    else { esp_rom_delay_us(delay_us); }
+            for (int i = 0; i < Q_SEGMENTS; i++) {
+                int idx = is_decel ? i : (Q_SEGMENTS - 1 - i);
+                for (uint32_t s = 0; s < q_steps[idx]; s++) {
+                    rmt_transmit(ctx->motor_chan, ctx->uniform_motor_encoder, &q_speeds[idx], sizeof(q_speeds[idx]), &tx_config);
                 }
             }
             rmt_tx_wait_all_done(ctx->motor_chan, -1);
@@ -791,6 +753,10 @@ esp_err_t stepper_rmt_run_sweep_profile(stepper_rmt_context_t *ctx, float target
     int64_t total_duration_us = is_bidirectional ? (int64_t)(duration_s * 2.0f * 1000000.0f) : (int64_t)(duration_s * 1000000.0f);
     rmt_transmit_config_t tx_config = { .loop_count = 0 };
 
+    volatile float *target_pos_ptr = (ctx->gpio_en == 5) ? &current_target_pos_x : &current_target_pos_y;
+    float phase = 0.0f;
+    float last_t = 0.0f;
+
     // CASE 1: Continuous Rotation (Maximum Amplitude)
     if (target_p2p_mm >= max_p2p - 0.1f) {
         while (1) {
@@ -808,9 +774,14 @@ esp_err_t stepper_rmt_run_sweep_profile(stepper_rmt_context_t *ctx, float target
 
             // Always calculate frequency strictly Logarithmic
             float freq_hz = start_freq_hz * powf(end_freq_hz / start_freq_hz, norm_t);
-            
             if (freq_hz < 0.1f) freq_hz = 0.1f;
             
+            float t_elapsed_sec = (float)elapsed_us / 1000000.0f;
+            float dt_t = t_elapsed_sec - last_t;
+            if (dt_t > 0) phase += 2.0f * PI_MATH * freq_hz * dt_t;
+            last_t = t_elapsed_sec;
+            *target_pos_ptr = (target_p2p_mm / 2.0f) * sinf(phase);
+
             uint32_t speed_hz = (uint32_t)(table_config->stepper.microsteps_per_rev * freq_hz);
             uint32_t chunk_steps = (uint32_t)(speed_hz * 0.1f);
             if(chunk_steps == 0) chunk_steps = 1;
@@ -823,12 +794,9 @@ esp_err_t stepper_rmt_run_sweep_profile(stepper_rmt_context_t *ctx, float target
         float A = target_p2p_mm / 2.0f;
         float s_amp = (asinf(A / r) / (2.0f * PI_MATH)) * table_config->stepper.microsteps_per_rev;
 
-        #define MAX_Q_SEGMENTS 100
-        int num_segments = (int)(s_amp / 5.0f);
-        if (num_segments > MAX_Q_SEGMENTS) num_segments = MAX_Q_SEGMENTS;
-        if (num_segments < 10) num_segments = 10;
-        uint32_t q_steps[MAX_Q_SEGMENTS];
-        uint32_t q_speeds[MAX_Q_SEGMENTS];
+        #define Q_SEGMENTS 20
+        uint32_t q_steps[Q_SEGMENTS];
+        uint32_t q_speeds[Q_SEGMENTS];
         float accum = 0.0f;
         int q = 0;
 
@@ -849,10 +817,16 @@ esp_err_t stepper_rmt_run_sweep_profile(stepper_rmt_context_t *ctx, float target
             float freq_hz = start_freq_hz * powf(end_freq_hz / start_freq_hz, norm_t);
             if (freq_hz < 0.1f) freq_hz = 0.1f;
 
-            float dt = (1.0f / freq_hz / 4.0f) / num_segments;
-            for (int i = 0; i < num_segments; i++) {
-                float s1 = s_amp * sinf((PI_MATH / 2.0f) * ((float)i / num_segments));
-                float s2 = s_amp * sinf((PI_MATH / 2.0f) * ((float)(i + 1) / num_segments));
+            float t_elapsed_sec = (float)elapsed_us / 1000000.0f;
+            float dt_t = t_elapsed_sec - last_t;
+            if (dt_t > 0) phase += 2.0f * PI_MATH * freq_hz * dt_t;
+            last_t = t_elapsed_sec;
+            *target_pos_ptr = (target_p2p_mm / 2.0f) * sinf(phase);
+
+            float dt = (1.0f / freq_hz / 4.0f) / Q_SEGMENTS;
+            for (int i = 0; i < Q_SEGMENTS; i++) {
+                float s1 = s_amp * sinf((PI_MATH / 2.0f) * ((float)i / Q_SEGMENTS));
+                float s2 = s_amp * sinf((PI_MATH / 2.0f) * ((float)(i + 1) / Q_SEGMENTS));
                 accum += (s2 - s1);
                 uint32_t steps = (uint32_t)floorf(accum);
                 accum -= steps;
@@ -863,19 +837,9 @@ esp_err_t stepper_rmt_run_sweep_profile(stepper_rmt_context_t *ctx, float target
 
             gpio_set_level(ctx->gpio_dir, (q % 4 == 0 || q % 4 == 3) ? STEP_MOTOR_SPIN_DIR_CLOCKWISE : STEP_MOTOR_SPIN_DIR_COUNTERCLOCKWISE);
             bool is_decel = (q % 4 == 0 || q % 4 == 2);
-            for (int i = 0; i < num_segments; i++) {
-                int idx = is_decel ? i : (num_segments - 1 - i);
-                uint32_t steps = q_steps[idx];
-                if (steps > 0 && q_speeds[idx] > 0) {
-                    for (uint32_t s = 0; s < steps; s++) {
-                        rmt_transmit(ctx->motor_chan, ctx->uniform_motor_encoder, &q_speeds[idx], sizeof(q_speeds[idx]), &tx_config);
-                    }
-                    rmt_tx_wait_all_done(ctx->motor_chan, -1);
-                } else {
-                    uint32_t delay_us = (uint32_t)(dt * 1000000.0f);
-                    if (delay_us > 10000) { vTaskDelay(pdMS_TO_TICKS(delay_us / 1000)); }
-                    else { esp_rom_delay_us(delay_us); }
-                }
+            for (int i = 0; i < Q_SEGMENTS; i++) {
+                int idx = is_decel ? i : (Q_SEGMENTS - 1 - i);
+                for (uint32_t s = 0; s < q_steps[idx]; s++) rmt_transmit(ctx->motor_chan, ctx->uniform_motor_encoder, &q_speeds[idx], sizeof(q_speeds[idx]), &tx_config);
             }
             rmt_tx_wait_all_done(ctx->motor_chan, -1);
             q++;
