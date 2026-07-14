@@ -280,27 +280,54 @@ esp_err_t stepper_rmt_run_sine_profile(stepper_rmt_context_t *ctx, float target_
     // For max P2P (~33mm), the crank-slider mechanism translates continuous rotation into full linear strokes.
     if (target_p2p_mm >= max_p2p - 0.1f) {
         ESP_LOGI(TAG, "Continuous Rotation Mode (Crank-slider naturally actuates the full stroke)");
-        uint32_t speed_hz = (uint32_t)(table_config->stepper.microsteps_per_rev * freq_hz);
-        uint32_t chunk_steps = speed_hz / 100; // Fragmentos de movimento (aprox 100ms) para podermos parar a qualquer instante
-        if (chunk_steps == 0) chunk_steps = 1;
+        float blend_time_s = 3.0f; // Rampa de aceleração S-Curve de 3 segundos
+        float last_t = 0.0f;
+        float current_phase = 0.0f;
         
         while (esp_timer_get_time() - start_time_us < duration_us) {
             if (nextion_profile == 0) break;
             
             float current_t = (float)(esp_timer_get_time() - start_time_us) / 1000000.0f;
-            float phase = 2.0f * PI_MATH * freq_hz * current_t;
-            float pos_mm = (target_p2p_mm / 2.0f) * sinf(phase);
+            float dt = current_t - last_t;
+            last_t = current_t;
+            
+            // Rampa S-Curve (mais suave que a linear)
+            float t_norm = current_t / blend_time_s;
+            float ramp_factor = (t_norm < 1.0f) ? (0.5f * (1.0f - cosf(PI_MATH * t_norm))) : 1.0f;
+            float current_freq_hz = freq_hz * ramp_factor;
+            
+            // Integração da fase com a frequência atual
+            if (dt > 0) {
+                current_phase += 2.0f * PI_MATH * current_freq_hz * dt;
+            }
+            
+            float pos_mm = (target_p2p_mm / 2.0f) * sinf(current_phase);
             *target_pos_ptr = pos_mm;
 
+            uint32_t speed_hz = (uint32_t)(table_config->stepper.microsteps_per_rev * current_freq_hz);
+            if (speed_hz < 100) speed_hz = 100; // Evitar divisão por zero e garantir chunks rápidos de 10ms
+            uint32_t chunk_steps = speed_hz / 100; // Fragmentos de ~10ms
+            if (chunk_steps == 0) chunk_steps = 1;
+
             rmt_transmit_config_t tx_config = { .loop_count = 0 };
-            rmt_symbol_word_t segment_symbols[chunk_steps];
+            
+            // Malloc em vez de VLA na Stack para evitar Stack Overflow
+            rmt_symbol_word_t *segment_symbols = malloc(chunk_steps * sizeof(rmt_symbol_word_t));
+            if (!segment_symbols) {
+                ESP_LOGE(TAG, "Failed to allocate memory for segment_symbols");
+                break;
+            }
+            
             uint32_t ticks = STEP_MOTOR_RESOLUTION_HZ / speed_hz / 2;
             for (uint32_t s = 0; s < chunk_steps; s++) {
                 segment_symbols[s].level0 = 0; segment_symbols[s].duration0 = ticks;
                 segment_symbols[s].level1 = 1; segment_symbols[s].duration1 = ticks;
             }
+            
             rmt_transmit(ctx->motor_chan, ctx->copy_encoder, segment_symbols, chunk_steps * sizeof(rmt_symbol_word_t), &tx_config);
             rmt_tx_wait_all_done(ctx->motor_chan, -1);
+            
+            free(segment_symbols);
         }
     } 
     // CASE 2: Partial Oscillation (e.g., 10mm)
@@ -355,10 +382,14 @@ esp_err_t stepper_rmt_run_sine_profile(stepper_rmt_context_t *ctx, float target_
         rmt_transmit_config_t tx_config = { .loop_count = 0 };
         int q = 0;
 
+        float blend_time_s = 3.0f; // Rampa de aceleração S-Curve de 3 segundos
+        
         // Execute the profile quarter-by-quarter
         while (1) {
+            float current_t = (float)(esp_timer_get_time() - start_time_us) / 1000000.0f;
+            
             // Absolute time check (exact millisecond cutoff)
-            if (esp_timer_get_time() - start_time_us >= duration_us) {
+            if (current_t >= duration_s) {
                 ESP_LOGI(TAG, "Exact time limit reached (%.2fs)! Test finished.", duration_s);
                 break;
             }
@@ -368,6 +399,7 @@ esp_err_t stepper_rmt_run_sine_profile(stepper_rmt_context_t *ctx, float target_
                 ESP_LOGW(TAG, "Sine Profile abortado a meio do ensaio!");
                 break;
             }
+
             // q=0: Forward (Moving away from center to positive peak)
             // q=1: Reverse (Returning to center)
             // q=2: Reverse (Moving away from center to negative peak)
@@ -378,6 +410,11 @@ esp_err_t stepper_rmt_run_sine_profile(stepper_rmt_context_t *ctx, float target_
             gpio_set_level(ctx->gpio_dir, is_cw ? STEP_MOTOR_SPIN_DIR_CLOCKWISE : STEP_MOTOR_SPIN_DIR_COUNTERCLOCKWISE);
 
             for (int i = 0; i < num_segments; i++) {
+                float current_segment_t = (float)(esp_timer_get_time() - start_time_us) / 1000000.0f;
+                // Rampa S-Curve
+                float t_norm = current_segment_t / blend_time_s;
+                float ramp_factor = (t_norm < 1.0f) ? (0.5f * (1.0f - cosf(PI_MATH * t_norm))) : 1.0f;
+
                 int idx = is_decel ? i : (num_segments - 1 - i); // Reverse speed array reading order if accelerating
                 
                 float phase = (q * (PI_MATH / 2.0f)) + (((float)i / num_segments) * (PI_MATH / 2.0f));
@@ -386,8 +423,11 @@ esp_err_t stepper_rmt_run_sine_profile(stepper_rmt_context_t *ctx, float target_
 
                 uint32_t steps = q_steps[idx];
                 if (steps > 0 && q_speeds[idx] > 0) {
+                    uint32_t current_speed = (uint32_t)(q_speeds[idx] * ramp_factor);
+                    if (current_speed < 100) current_speed = 100; // Evitar bloqueios longos
+                    
                     rmt_symbol_word_t segment_symbols[steps];
-                    uint32_t ticks = STEP_MOTOR_RESOLUTION_HZ / q_speeds[idx] / 2;
+                    uint32_t ticks = STEP_MOTOR_RESOLUTION_HZ / current_speed / 2;
                     for (uint32_t s = 0; s < steps; s++) {
                         segment_symbols[s].level0 = 0; segment_symbols[s].duration0 = ticks;
                         segment_symbols[s].level1 = 1; segment_symbols[s].duration1 = ticks;
