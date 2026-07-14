@@ -277,7 +277,7 @@ esp_err_t stepper_rmt_run_sine_profile(stepper_rmt_context_t *ctx, float target_
     if (target_p2p_mm >= max_p2p - 0.1f) {
         ESP_LOGI(TAG, "Continuous Rotation Mode (Crank-slider naturally actuates the full stroke)");
         uint32_t speed_hz = (uint32_t)(table_config->stepper.microsteps_per_rev * freq_hz);
-        uint32_t chunk_steps = speed_hz / 10; // Fragmentos de movimento (aprox 100ms) para podermos parar a qualquer instante
+        uint32_t chunk_steps = speed_hz / 100; // Fragmentos de movimento (aprox 100ms) para podermos parar a qualquer instante
         if (chunk_steps == 0) chunk_steps = 1;
         
         while (esp_timer_get_time() - start_time_us < duration_us) {
@@ -306,17 +306,21 @@ esp_err_t stepper_rmt_run_sine_profile(stepper_rmt_context_t *ctx, float target_
         float s_amp = (theta_rad / (2.0f * PI_MATH)) * table_config->stepper.microsteps_per_rev;
 
         // Velocity profile generation for 1/4 of the wave cycle (0 to peak)
-        #define Q_SEGMENTS 20
-        uint32_t q_steps[Q_SEGMENTS];
-        uint32_t q_speeds[Q_SEGMENTS];
+        #define MAX_Q_SEGMENTS 100
+        int num_segments = (int)(s_amp / 5.0f);
+        if (num_segments > MAX_Q_SEGMENTS) num_segments = MAX_Q_SEGMENTS;
+        if (num_segments < 10) num_segments = 10;
+        
+        uint32_t q_steps[MAX_Q_SEGMENTS];
+        uint32_t q_speeds[MAX_Q_SEGMENTS];
 
         float T = 1.0f / freq_hz;
-        float dt = (T / 4.0f) / Q_SEGMENTS;
+        float dt = (T / 4.0f) / num_segments;
         float accum = 0.0f;
 
-        for (int i = 0; i < Q_SEGMENTS; i++) {
-            float tau1 = (float)i / Q_SEGMENTS;
-            float tau2 = (float)(i + 1) / Q_SEGMENTS;
+        for (int i = 0; i < num_segments; i++) {
+            float tau1 = (float)i / num_segments;
+            float tau2 = (float)(i + 1) / num_segments;
 
             // The position progresses sinusoidally over time
             float s1 = s_amp * sinf((PI_MATH / 2.0f) * tau1);
@@ -361,10 +365,10 @@ esp_err_t stepper_rmt_run_sine_profile(stepper_rmt_context_t *ctx, float target_
 
             gpio_set_level(ctx->gpio_dir, is_cw ? STEP_MOTOR_SPIN_DIR_CLOCKWISE : STEP_MOTOR_SPIN_DIR_COUNTERCLOCKWISE);
 
-            for (int i = 0; i < Q_SEGMENTS; i++) {
-                int idx = is_decel ? i : (Q_SEGMENTS - 1 - i); // Reverse speed array reading order if accelerating
+            for (int i = 0; i < num_segments; i++) {
+                int idx = is_decel ? i : (num_segments - 1 - i); // Reverse speed array reading order if accelerating
                 
-                float phase = (q * (PI_MATH / 2.0f)) + (((float)i / Q_SEGMENTS) * (PI_MATH / 2.0f));
+                float phase = (q * (PI_MATH / 2.0f)) + (((float)i / num_segments) * (PI_MATH / 2.0f));
                 float pos_mm = (target_p2p_mm / 2.0f) * sinf(phase);
                 *target_pos_ptr = pos_mm;
 
