@@ -67,6 +67,7 @@ struct stepper_rmt_context_t {
     rmt_encoder_handle_t accel_motor_encoder;
     rmt_encoder_handle_t uniform_motor_encoder;
     rmt_encoder_handle_t decel_motor_encoder;
+    rmt_encoder_handle_t copy_encoder;
 };
 
 stepper_rmt_context_t* stepper_rmt_init(uint8_t gpio_en, uint8_t gpio_dir, uint8_t gpio_step)
@@ -123,6 +124,9 @@ stepper_rmt_context_t* stepper_rmt_init(uint8_t gpio_en, uint8_t gpio_dir, uint8
         .end_freq_hz = 500,
     };
     ESP_ERROR_CHECK(rmt_new_stepper_motor_curve_encoder(&decel_encoder_config, &ctx->decel_motor_encoder));
+
+    rmt_copy_encoder_config_t copy_encoder_config = {};
+    ESP_ERROR_CHECK(rmt_new_copy_encoder(&copy_encoder_config, &ctx->copy_encoder));
 
     ESP_LOGI(TAG, "Enable RMT channel");
     ESP_ERROR_CHECK(rmt_enable(ctx->motor_chan));
@@ -288,7 +292,15 @@ esp_err_t stepper_rmt_run_sine_profile(stepper_rmt_context_t *ctx, float target_
             float pos_mm = (target_p2p_mm / 2.0f) * sinf(phase);
             *target_pos_ptr = pos_mm;
 
-            stepper_rmt_run_steps(ctx, speed_hz, chunk_steps, 0, 0, true);
+            rmt_transmit_config_t tx_config = { .loop_count = 0 };
+            rmt_symbol_word_t segment_symbols[chunk_steps];
+            uint32_t ticks = STEP_MOTOR_RESOLUTION_HZ / speed_hz / 2;
+            for (uint32_t s = 0; s < chunk_steps; s++) {
+                segment_symbols[s].level0 = 0; segment_symbols[s].duration0 = ticks;
+                segment_symbols[s].level1 = 1; segment_symbols[s].duration1 = ticks;
+            }
+            rmt_transmit(ctx->motor_chan, ctx->copy_encoder, segment_symbols, chunk_steps * sizeof(rmt_symbol_word_t), &tx_config);
+            rmt_tx_wait_all_done(ctx->motor_chan, -1);
         }
     } 
     // CASE 2: Partial Oscillation (e.g., 10mm)
@@ -374,14 +386,16 @@ esp_err_t stepper_rmt_run_sine_profile(stepper_rmt_context_t *ctx, float target_
 
                 uint32_t steps = q_steps[idx];
                 if (steps > 0 && q_speeds[idx] > 0) {
-                    // In RMT Uniform mode, 'rmt_transmit' must be called N times for N steps
+                    rmt_symbol_word_t segment_symbols[steps];
+                    uint32_t ticks = STEP_MOTOR_RESOLUTION_HZ / q_speeds[idx] / 2;
                     for (uint32_t s = 0; s < steps; s++) {
-                        rmt_transmit(ctx->motor_chan, ctx->uniform_motor_encoder, &q_speeds[idx], sizeof(q_speeds[idx]), &tx_config);
+                        segment_symbols[s].level0 = 0; segment_symbols[s].duration0 = ticks;
+                        segment_symbols[s].level1 = 1; segment_symbols[s].duration1 = ticks;
                     }
+                    rmt_transmit(ctx->motor_chan, ctx->copy_encoder, segment_symbols, steps * sizeof(rmt_symbol_word_t), &tx_config);
+                    rmt_tx_wait_all_done(ctx->motor_chan, -1);
                 }
             }
-            // Wait for this movement to finish before reversing direction
-            rmt_tx_wait_all_done(ctx->motor_chan, -1);
             q++;
         }
     }
