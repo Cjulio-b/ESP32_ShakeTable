@@ -131,6 +131,10 @@ void sendAckToNextion(int ackmsg)
             nextion_send_command("va0.val=167"); // ACK FILE NOT FOUND (0xA7)
             ESP_LOGW("NEXTION", "↩️ File for playback not found in memory");
             break;
+        case 168:
+            nextion_send_command("va0.val=168"); // ACK MOTION STOP (0xA8)
+            ESP_LOGW("NEXTION", "Stop motion requested by user.");
+            break;
         // Menu config ACKs for HMI Nextion
         case 201:
             nextion_send_command("va0.val=201"); // ACK FILE OPEN ERROR (0xC9)
@@ -336,7 +340,7 @@ void rxFromNextion(const uint8_t *data, int len)
                         nextion_profile = 1; // Sinewave Profile 
                     } else if (component_id == 13 && event == 0) { // STOP button Sinewave Profile
                         ESP_LOGI("NEXTION", "Stop SineWave Profile Selected!");
-                        sendAckToNextion(164); // ACK MOTION END
+                        sendAckToNextion(168); // ACK MOTION END
                         nextion_profile = 0; // STOP signal (aborts motor loop)
                         parameters_recv = false;
                     }

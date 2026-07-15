@@ -198,6 +198,11 @@ esp_err_t stepper_rmt_run_steps(stepper_rmt_context_t *ctx, uint32_t uniform_spe
     
     // Assume the switch pulls to GND (0V) when pressed
     while (gpio_get_level(gpio_limit_right) != 0) {
+        if (nextion_profile == 0) {
+            ESP_LOGW(TAG, "HOMING (Motor EN:%d): Aborted by user!", ctx->gpio_en);
+            gpio_set_level(ctx->gpio_en, !STEP_MOTOR_ENABLE_LEVEL);
+            return ESP_FAIL;
+        }
         for (int i = 0; i < chunk_size; i++) {
             rmt_transmit(ctx->motor_chan, ctx->uniform_motor_encoder, &homing_speed_hz, sizeof(homing_speed_hz), &tx_config);
         }
@@ -212,6 +217,11 @@ esp_err_t stepper_rmt_run_steps(stepper_rmt_context_t *ctx, uint32_t uniform_spe
     uint32_t total_steps = 0;
     
     while (gpio_get_level(gpio_limit_left) != 0) {
+        if (nextion_profile == 0) {
+            ESP_LOGW(TAG, "HOMING (Motor EN:%d): Aborted by user!", ctx->gpio_en);
+            gpio_set_level(ctx->gpio_en, !STEP_MOTOR_ENABLE_LEVEL);
+            return ESP_FAIL;
+        }
         for (int i = 0; i < chunk_size; i++) {
             rmt_transmit(ctx->motor_chan, ctx->uniform_motor_encoder, &homing_speed_hz, sizeof(homing_speed_hz), &tx_config);
         }
