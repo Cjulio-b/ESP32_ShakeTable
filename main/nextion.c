@@ -255,9 +255,11 @@ bool displacement_parameter_validation(float disp_mm, char axis)
     }
 }
 
-bool frequency_parameter_validation(float freq_hz)
+bool frequency_parameter_validation(float freq_hz, char axis)
 {
-    if (freq_hz < 0.0f || freq_hz > 5.0f) { // Example: 5Hz limit
+    float max_freq = (axis == 'x') ? table_config_x.axis.max_freq_hz : table_config_y.axis.max_freq_hz;
+
+    if (freq_hz < 0.0f || freq_hz > max_freq) {
         ESP_LOGW("NEXTION", "Frequency parameter out of range");
         return false;
     } else {
@@ -403,14 +405,14 @@ void rxFromNextion(const uint8_t *data, int len)
                      }
                 }
                 else if (page == 8) {
-                    if (component_id == 31 && event == 0) { // <-- DEFAULT configuration BUTTON ID (0x1F = 31)
+                    if (component_id == 28 && event == 0) { // <-- DEFAULT configuration BUTTON ID (0x1C = 28)
                         ESP_LOGI("NEXTION", "Default Settings Button Pressed! Restoring defaults to NVS...");
                         
                         // Reset global structs to default values
-                        kinematics_init_axis(&table_config_x.axis, 27.33f, 14.0f, 100.0f);
+                        kinematics_init_axis(&table_config_x.axis, 27.33f, 14.0f, 100.0f, 1.5f);
                         kinematics_init_stepper(&table_config_x.stepper, 1.8f, 5.18f, 32);
                         
-                        kinematics_init_axis(&table_config_y.axis, 26.84f, 14.0f, 95.0f);
+                        kinematics_init_axis(&table_config_y.axis, 26.84f, 14.0f, 95.0f, 1.5f);
                         kinematics_init_stepper(&table_config_y.stepper, 1.8f, 5.18f, 32);
                         
                         // Save directly to NVS
@@ -424,7 +426,7 @@ void rxFromNextion(const uint8_t *data, int len)
                         
                        sendAckToNextion(204); // ACK FACTORY DEFAULTS RESTORED
                     }
-                    if (component_id == 32 && event == 1) { // <-- Request Configuration BUTTON ID (0x20 = 32)
+                    if (component_id == 31 && event == 1) { // <-- Request Configuration BUTTON ID (0x1F = 31)
                         ESP_LOGI("NEXTION", "Request for current configuration received.");
                         
                         char value_str[16];
@@ -457,6 +459,11 @@ void rxFromNextion(const uint8_t *data, int len)
 
                         SEND_PARAM("cb0", cb0_idx, 1.0f); // scale 1.0f porque queremos o numero exato
                         SEND_PARAM("cb1", cb1_idx, 1.0f);
+                        
+                        int cb2_idx = (table_config_x.axis.max_freq_hz > 2.0f) ? 1 : 0;
+                        int cb3_idx = (table_config_y.axis.max_freq_hz > 2.0f) ? 1 : 0;
+                        SEND_PARAM("cb2", cb2_idx, 1.0f);
+                        SEND_PARAM("cb3", cb3_idx, 1.0f);
                         
                         SEND_PARAM("x10", table_config_x.stepper.gear_ratio, 100.0f);
                         SEND_PARAM("x11", table_config_y.stepper.gear_ratio, 100.0f);
@@ -498,7 +505,7 @@ void rxFromNextion(const uint8_t *data, int len)
                     ESP_LOGI("NEXTION", "✅ CRC OK - F_y=%.1fHz, F_x=%.1fHz, D_y=%.1fmm, D_x=%.1fmm, Tmp=%.1fs",
                             f_freq_y, f_freq_x, f_disp_y, f_disp_x, f_time_s);
                     if(displacement_parameter_validation(f_disp_x, 'x') && displacement_parameter_validation(f_disp_y, 'y') &&
-                       frequency_parameter_validation(f_freq_x) && frequency_parameter_validation(f_freq_y) &&
+                       frequency_parameter_validation(f_freq_x, 'x') && frequency_parameter_validation(f_freq_y, 'y') &&
                        time_parameter_validation(f_time_s) && compare_disp_w_freq(f_disp_x, f_freq_x) && compare_disp_w_freq(f_disp_y, f_freq_y)) {
                         ESP_LOGI("NEXTION", "All parameters are valid. Waiting to start motion profile...");
                         
@@ -587,15 +594,15 @@ void rxFromNextion(const uint8_t *data, int len)
                     // 2. Valida Frequências do Motor X
                     if (f2_disp_x > 0.0f) {
                         params_ok &= time_parameter_validation(f2_time_x1) && time_parameter_validation(f2_time_x2) && time_parameter_validation(f2_time_x3) && time_parameter_validation(f2_time_x4);
-                        params_ok &= frequency_parameter_validation(f2_freq_x1) && frequency_parameter_validation(f2_freq_x2) &&
-                                     frequency_parameter_validation(f2_freq_x3) && frequency_parameter_validation(f2_freq_x4);
+                        params_ok &= frequency_parameter_validation(f2_freq_x1, 'x') && frequency_parameter_validation(f2_freq_x2, 'x') &&
+                                     frequency_parameter_validation(f2_freq_x3, 'x') && frequency_parameter_validation(f2_freq_x4, 'x');
                     }
                         
                     // 3. Validate Motor Y Frequencies
                     if (f2_disp_y > 0.0f) {
                         params_ok &= time_parameter_validation(f2_time_y1) && time_parameter_validation(f2_time_y2) && time_parameter_validation(f2_time_y3) && time_parameter_validation(f2_time_y4);
-                        params_ok &= frequency_parameter_validation(f2_freq_y1) && frequency_parameter_validation(f2_freq_y2) &&
-                                     frequency_parameter_validation(f2_freq_y3) && frequency_parameter_validation(f2_freq_y4);
+                        params_ok &= frequency_parameter_validation(f2_freq_y1, 'y') && frequency_parameter_validation(f2_freq_y2, 'y') &&
+                                     frequency_parameter_validation(f2_freq_y3, 'y') && frequency_parameter_validation(f2_freq_y4, 'y');
                     }
 
                     // 4. Validate Displacement vs. Frequency coherence (sum frequencies for each axis for the test)
@@ -692,14 +699,14 @@ void rxFromNextion(const uint8_t *data, int len)
                     if (f3_disp_x > 0.0f) {
                         float total_time_x = f3_acelTime_x + f3_cruiseTime_x + f3_decelTime_x;
                         params_ok &= time_parameter_validation(total_time_x);
-                        params_ok &= frequency_parameter_validation(f3_startFreq_x) && frequency_parameter_validation(f3_cruiseFreq_x) && frequency_parameter_validation(f3_endFreq_x);
+                        params_ok &= frequency_parameter_validation(f3_startFreq_x, 'x') && frequency_parameter_validation(f3_cruiseFreq_x, 'x') && frequency_parameter_validation(f3_endFreq_x, 'x');
                         params_ok &= compare_disp_w_freq(f3_disp_x, f3_cruiseFreq_x);
                     }
                         
                     if (f3_disp_y > 0.0f) {
                         float total_time_y = f3_acelTime_y + f3_cruiseTime_y + f3_decelTime_y;
                         params_ok &= time_parameter_validation(total_time_y);
-                        params_ok &= frequency_parameter_validation(f3_startFreq_y) && frequency_parameter_validation(f3_cruiseFreq_y) && frequency_parameter_validation(f3_endFreq_y);
+                        params_ok &= frequency_parameter_validation(f3_startFreq_y, 'y') && frequency_parameter_validation(f3_cruiseFreq_y, 'y') && frequency_parameter_validation(f3_endFreq_y, 'y');
                         params_ok &= compare_disp_w_freq(f3_disp_y, f3_cruiseFreq_y);
                     }
 
@@ -765,12 +772,12 @@ void rxFromNextion(const uint8_t *data, int len)
                     params_ok &= time_parameter_validation(f4_duration);
 
                     if (f4_disp_x > 0.0f) {
-                        params_ok &= frequency_parameter_validation(f4_minFreq_x) && frequency_parameter_validation(f4_maxFreq_x);
+                        params_ok &= frequency_parameter_validation(f4_minFreq_x, 'x') && frequency_parameter_validation(f4_maxFreq_x, 'x');
                         params_ok &= compare_disp_w_freq(f4_disp_x, f4_maxFreq_x);
                     }
 
                     if (f4_disp_y > 0.0f) {
-                        params_ok &= frequency_parameter_validation(f4_minFreq_y) && frequency_parameter_validation(f4_maxFreq_y);
+                        params_ok &= frequency_parameter_validation(f4_minFreq_y, 'y') && frequency_parameter_validation(f4_maxFreq_y, 'y');
                         params_ok &= compare_disp_w_freq(f4_disp_y, f4_maxFreq_y);
                     }
 
@@ -840,7 +847,7 @@ void rxFromNextion(const uint8_t *data, int len)
                     params_ok &= time_parameter_validation(f5_duration);
 
                     if (f5_disp_x > 0.0f) {
-                        params_ok &= frequency_parameter_validation(f5_minFreq_x) && frequency_parameter_validation(f5_maxFreq_x);
+                        params_ok &= frequency_parameter_validation(f5_minFreq_x, 'x') && frequency_parameter_validation(f5_maxFreq_x, 'x');
                         params_ok &= compare_disp_w_freq(f5_disp_x, f5_maxFreq_x);
                         if (f5_minFreq_x > f5_maxFreq_x) {
                             ESP_LOGW("NEXTION", "Sweep: Min Freq X (%.1f) greater than Max Freq X (%.1f)!", f5_minFreq_x, f5_maxFreq_x);
@@ -849,7 +856,7 @@ void rxFromNextion(const uint8_t *data, int len)
                     }
 
                     if (f5_disp_y > 0.0f) {
-                        params_ok &= frequency_parameter_validation(f5_minFreq_y) && frequency_parameter_validation(f5_maxFreq_y);
+                        params_ok &= frequency_parameter_validation(f5_minFreq_y, 'y') && frequency_parameter_validation(f5_maxFreq_y, 'y');
                         params_ok &= compare_disp_w_freq(f5_disp_y, f5_maxFreq_y);
                         if (f5_minFreq_y > f5_maxFreq_y) {
                             ESP_LOGW("NEXTION", "Sweep: Min Freq Y (%.1f) greater than Max Freq Y (%.1f)!", f5_minFreq_y, f5_maxFreq_y);
@@ -895,7 +902,7 @@ void rxFromNextion(const uint8_t *data, int len)
             // Machine Configuration (0x55 0x00)
             else if (buffer[0] == 0x55 && buffer[1] == 0x00) {
                 // Exemplo: 55 00 0E 01 0E 01 8C 00 8C 00 E8 03 B6 03 12 00 12 00 40 01 40 01 06 02 06 02 22 8F FF FF FF
-                if (index >= 31) { 
+                if (index >= 35) { 
                     uint16_t p2p_x = buffer[2] | (buffer[3] << 8);
                     uint16_t p2p_y = buffer[4] | (buffer[5] << 8);
                     uint16_t crank_x = buffer[6] | (buffer[7] << 8);
@@ -908,10 +915,12 @@ void rxFromNextion(const uint8_t *data, int len)
                     uint16_t micro_y = buffer[20] | (buffer[21] << 8);
                     uint16_t gear_x = buffer[22] | (buffer[23] << 8);
                     uint16_t gear_y = buffer[24] | (buffer[25] << 8);
-                    uint16_t recv_crc = buffer[26] | (buffer[27] << 8);
+                    uint16_t max_freq_x_val = buffer[26] | (buffer[27] << 8);
+                    uint16_t max_freq_y_val = buffer[28] | (buffer[29] << 8);
+                    uint16_t recv_crc = buffer[30] | (buffer[31] << 8);
 
-                    uint8_t payload[24];
-                    for(int j = 0; j < 24; j++) {
+                    uint8_t payload[28];
+                    for(int j = 0; j < 28; j++) {
                         payload[j] = buffer[2 + j];
                     }
                     uint16_t calc_crc = nextion_crc16_modbus(payload, sizeof(payload));
@@ -936,11 +945,14 @@ void rxFromNextion(const uint8_t *data, int len)
                         else if (micro_y >= 40) real_micro_y = micro_y / 10;
                         else real_micro_y = micro_y;
 
+                        float max_freq_x_hz = (max_freq_x_val == 0) ? 1.5f : 5.0f;
+                        float max_freq_y_hz = (max_freq_y_val == 0) ? 1.5f : 5.0f;
+
                         // Update global structs
-                        kinematics_init_axis(&table_config_x.axis, p2p_x / 10.0f, crank_x / 10.0f, rod_x / 10.0f);
+                        kinematics_init_axis(&table_config_x.axis, p2p_x / 10.0f, crank_x / 10.0f, rod_x / 10.0f, max_freq_x_hz);
                         kinematics_init_stepper(&table_config_x.stepper, step_x / 10.0f, gear_x / 100.0f, real_micro_x);
                         
-                        kinematics_init_axis(&table_config_y.axis, p2p_y / 10.0f, crank_y / 10.0f, rod_y / 10.0f);
+                        kinematics_init_axis(&table_config_y.axis, p2p_y / 10.0f, crank_y / 10.0f, rod_y / 10.0f, max_freq_y_hz);
                         kinematics_init_stepper(&table_config_y.stepper, step_y / 10.0f, gear_y / 100.0f, real_micro_y);
                         
                         // Save to NVS

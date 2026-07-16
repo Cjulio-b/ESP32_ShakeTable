@@ -9,6 +9,7 @@ typedef struct {
     float max_amplitude_mm;     // Maximum amplitude (peak_to_peak_disp_mm / 2)
     float crank_radius_mm;      // Crank radius (usually equal to max_amplitude)
     float rod_length_mm;        // Rod length
+    float max_freq_hz;          // Maximum operating frequency (Hz)
 } shake_table_axis_config_t;
 
 // Structure for the stepper motor parameters
@@ -37,7 +38,7 @@ void kinematics_init_stepper(stepper_config_t *stepper, float step_angle_deg, fl
 /**
  * @brief Initializes the physical dimensions of the table (Slider-Crank mechanism)
  */
-void kinematics_init_axis(shake_table_axis_config_t *axis, float peak_to_peak_safety_limit_mm, float crank_radius_mm, float rod_length_mm);
+void kinematics_init_axis(shake_table_axis_config_t *axis, float peak_to_peak_safety_limit_mm, float crank_radius_mm, float rod_length_mm, float max_freq_hz);
 
 /**
  * @brief Calculates the current angular position of the motor (in degrees [0 to 360]) based on the given microsteps

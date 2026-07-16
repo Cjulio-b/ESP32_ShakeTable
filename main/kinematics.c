@@ -16,13 +16,14 @@ void kinematics_init_stepper(stepper_config_t *stepper, float step_angle_deg, fl
     stepper->angular_resolution_deg = 360.0f / (float)stepper->microsteps_per_rev;
 }
 
-void kinematics_init_axis(shake_table_axis_config_t *axis, float peak_to_peak_safety_limit_mm, float crank_radius_mm, float rod_length_mm) {
+void kinematics_init_axis(shake_table_axis_config_t *axis, float peak_to_peak_safety_limit_mm, float crank_radius_mm, float rod_length_mm, float max_freq_hz) {
     if (!axis) return;
     
     axis->peak_to_peak_disp_mm = peak_to_peak_safety_limit_mm; // This is now a safety limit
     axis->max_amplitude_mm = peak_to_peak_safety_limit_mm / 2.0f;
     axis->crank_radius_mm = crank_radius_mm;
     axis->rod_length_mm = rod_length_mm;
+    axis->max_freq_hz = max_freq_hz;
 }
 
 float kinematics_calc_angular_position(const stepper_config_t *stepper, int32_t current_step) {
