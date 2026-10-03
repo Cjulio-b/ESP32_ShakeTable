@@ -7,7 +7,7 @@
 #define NEXTION_TERMINATOR 0xFF
 #define NEXTION_MAX_LEN 64
 
-// Variáveis globais para armazenar os parâmetros validados do Nextion
+// Global variables to store validated parameters from Nextion
 float nextion_target_freq_x = 0.0f;
 float nextion_target_freq_y = 0.0f;
 float nextion_target_disp_x = 0.0f;
@@ -445,7 +445,7 @@ void rxFromNextion(const uint8_t *data, int len)
                         SEND_PARAM("x6", table_config_x.stepper.step_angle_deg, 10.0f);
                         SEND_PARAM("x7", table_config_y.stepper.step_angle_deg, 10.0f);
                         
-                        // Envia o Index da Combobox (0, 1, 2 ou 3) em vez do valor absoluto * 10
+                        // Sends the Combobox Index (0, 1, 2 or 3) instead of absolute value * 10
                         int cb0_idx = 3, cb1_idx = 3; // Default para 32 microsteps (index 3)
                         if (table_config_x.stepper.microsteps == 4) cb0_idx = 0;
                         else if (table_config_x.stepper.microsteps == 8) cb0_idx = 1;
@@ -457,7 +457,7 @@ void rxFromNextion(const uint8_t *data, int len)
                         else if (table_config_y.stepper.microsteps == 16) cb1_idx = 2;
                         else if (table_config_y.stepper.microsteps == 32) cb1_idx = 3;
 
-                        SEND_PARAM("cb0", cb0_idx, 1.0f); // scale 1.0f porque queremos o numero exato
+                        SEND_PARAM("cb0", cb0_idx, 1.0f); // scale 1.0f because we want the exact number
                         SEND_PARAM("cb1", cb1_idx, 1.0f);
                         
                         int cb2_idx = (table_config_x.axis.max_freq_hz > 2.0f) ? 1 : 0;
@@ -591,7 +591,7 @@ void rxFromNextion(const uint8_t *data, int len)
                     params_ok &= displacement_parameter_validation(f2_disp_y, 'y');
                     params_ok &= time_parameter_validation(f2_time_s);
 
-                    // 2. Valida Frequências do Motor X
+                    // 2. Validate Motor X Frequencies
                     if (f2_disp_x > 0.0f) {
                         params_ok &= time_parameter_validation(f2_time_x1) && time_parameter_validation(f2_time_x2) && time_parameter_validation(f2_time_x3) && time_parameter_validation(f2_time_x4);
                         params_ok &= frequency_parameter_validation(f2_freq_x1, 'x') && frequency_parameter_validation(f2_freq_x2, 'x') &&
@@ -644,7 +644,7 @@ void rxFromNextion(const uint8_t *data, int len)
                     sendAckToNextion(161); // ACK ERROR;
                 }
             } else if (buffer[0] == 0x55 && buffer[1] == 0x03) {
-                //  Perfil Trapezoidal
+                //  Trapezoidal Profile
                 //  Example: 55 03 05 00 1E 00 0A 00 05 00 19 00 32 00 0A 00 FA 00 14 00 00 00 2C 01 28 00 96 00 E6 00 AD C9 FF FF FF
                 //  55 - Custom Send Event ; 03 - Type of Data (Trapezoidal Parameters) ; 05 00 - startFreq_y (0.5Hz) ; 1E 00 - cruiseFreq_y (3.0Hz) ; 0A 00 - endFreq_y (1.0Hz) ; 05 00 - startFreq_x (0.5Hz) ; 19 00 - cruiseFreq_x (2.5Hz) ; 32 00 - endFreq_x (5.0Hz) ; 0A 00 - acelTime_y (1.0s) ; FA 00 - cruiseTime_y (25.0s) ; 14 00 - decelTime_y (2.0s) ; 00 00 - acelTime_x (0.0s) ; 2C 01 - cruiseTime_x (30.0s) ; 28 00 - decelTime_x (4.0s) ; 96 00 - disp_y (15.0mm) ; E6 00 - disp_x (23.0mm) ; AD C9 - CRC16 ; FF FF FF - Terminator
 
@@ -928,7 +928,7 @@ void rxFromNextion(const uint8_t *data, int len)
                     if (recv_crc == calc_crc) {
                         ESP_LOGI("NEXTION", "✅ CRC OK - New physical configuration received!");
                         
-                        // Converte o valor recebido do HMI (que pode ser o Index da combobox 0,1,2,3 ou o valor multiplicado por 10)
+                        // Converts the value received from HMI (can be the Combobox index 0,1,2,3 or the value multiplied by 10)
                         uint16_t real_micro_x = 32;
                         if (micro_x == 0) real_micro_x = 4;
                         else if (micro_x == 1) real_micro_x = 8;

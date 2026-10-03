@@ -191,7 +191,7 @@ void GPIO_init(void)
 {
     /* Configure GPIOs as needed */
 
-    // Pino de Sincronismo (SYNC) para o MCU 2
+    // Synchronization Pin (SYNC) for MCU 2
     gpio_config_t sync_conf = {
         .pin_bit_mask = (1ULL << GPIO_NUM_21),
         .mode = GPIO_MODE_OUTPUT,
@@ -200,5 +200,5 @@ void GPIO_init(void)
         .intr_type = GPIO_INTR_DISABLE
     };
     gpio_config(&sync_conf);
-    gpio_set_level(GPIO_NUM_21, 0); // Ensaio parado no arranque
+    gpio_set_level(GPIO_NUM_21, 0); // Test stopped at startup
 }

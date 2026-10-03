@@ -3,8 +3,8 @@
 #define MAIN_FUNCTIONS_H_
 
 #include "esp_mac.h"
-#include "esp_err.h"          // Para o tipo esp_err_t
-#include "esp_http_server.h"  // Para httpd_req_t e httpd_handle_t
+#include "esp_err.h"          // For esp_err_t type
+#include "esp_http_server.h"  // For httpd_req_t and httpd_handle_t
 #include "esp_adc/adc_oneshot.h"
 #include "kinematics.h"
 #include "driver/i2c_master.h"
@@ -57,7 +57,7 @@ extern bool nextion_sweep_isBid_x;
 extern bool nextion_sweep_isBid_y;
 extern bool parameters_recv;
 
-// I2C Handles globais --------------------------------
+// Global I2C Handles --------------------------------
 extern i2c_master_bus_handle_t i2c_bus_handle;
 extern i2c_master_bus_handle_t i2c_bus_2_handle;
 extern i2c_master_dev_handle_t mcp_handle;

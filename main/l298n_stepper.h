@@ -7,7 +7,7 @@ extern "C" {
 #endif
 
 // -----------------------------------------------------
-// CONFIGURAÇÃO DE PINOS
+// PIN CONFIGURATION
 // -----------------------------------------------------
 #define IN1_GPIO 13
 #define IN2_GPIO 12
@@ -15,16 +15,16 @@ extern "C" {
 #define IN4_GPIO 33
 
 // -----------------------------------------------------
-// API PÚBLICA
+// PUBLIC API
 // -----------------------------------------------------
 
 void l298n_init(void);
 void l298n_set_min_step_us(uint32_t min_us);
 
-// movimento básico: N halfsteps a uma frequência fixa
+// basic movement: N halfsteps at a fixed frequency
 void l298n_move_halfsteps(uint32_t halfsteps, float freq_hz, bool direction);
 
-// movimento com aceleração linear trapezoidal
+// movement with trapezoidal linear acceleration
 void l298n_move_trapezoidal(uint32_t total_steps,
                             float start_hz,
                             float cruise_hz,
@@ -33,17 +33,17 @@ void l298n_move_trapezoidal(uint32_t total_steps,
                             float decel_time_s,
                             bool direction);
 
-// EXECUÇÃO DE PERFIS SÍSMICOS
+// SEISMIC PROFILES EXECUTION
 typedef struct {
-    const float *speed_hz;     // array de velocidades (Hz)
-    const float *duration_s;   // array de durações (segundos)
-    int length;                // número de amostras
+    const float *speed_hz;     // speed array (Hz)
+    const float *duration_s;   // duration array (seconds)
+    int length;                // number of samples
 } seismic_profile_t;
 
-// Reproduzir perfil sísmico
+// Play seismic profile
 void l298n_play_seismic_profile(const seismic_profile_t *profile, bool direction);
 
-// Task para controle do motor de passo L298N
+// Task for L298N stepper motor control
 void stepper_task(void *arg);
 
 #ifdef __cplusplus

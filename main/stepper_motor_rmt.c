@@ -32,27 +32,27 @@ static const char *TAG = "DRV8825_RMT";
 
 // Using 'volatile' tells the compiler that this variable can be changed
 // at any time by another Task (in this case, the UART/Nextion rx_task)
-volatile int8_t nextion_profile = 0; // 0 significa repouso absoluto (A aguardar comando do HMI)
+volatile int8_t nextion_profile = 0; // 0 means absolute rest (Waiting for HMI command)
 volatile bool motor1_busy = false;
 volatile bool motor2_busy = false;
 volatile bool motor1_ready = false;
 volatile bool motor2_ready = false;
 
-// Tracking do deslocamento para a aquisição de dados do acelerómetro
+// Displacement tracking for accelerometer data acquisition
 volatile float current_target_pos_x = 0.0f;
 volatile float current_target_pos_y = 0.0f;
 
-// Handle global partilhado do ADC1 para ambas as tasks
+// Global ADC1 handle shared for both tasks
 static adc_oneshot_unit_handle_t s_adc1_handle = NULL;
 
-// Helper para controlar os LEDs no expansor MCP23017 via I2C
+// Helper to control LEDs on the MCP23017 expander via I2C
 static uint8_t mcp_port_a_state = 0;
 static void set_motor_led(int motor_id, bool state) {
     if (!mcp_handle) return;
-    if (motor_id == 1) { // LED do Motor 1 no Pino A0
+    if (motor_id == 1) { // Motor 1 LED on Pin A0
         if (state) mcp_port_a_state |= (1 << 0);
         else mcp_port_a_state &= ~(1 << 0);
-    } else if (motor_id == 2) { // LED do Motor 2 no Pino A1
+    } else if (motor_id == 2) { // Motor 2 LED on Pin A1
         if (state) mcp_port_a_state |= (1 << 1);
         else mcp_port_a_state &= ~(1 << 1);
     }
@@ -188,7 +188,7 @@ esp_err_t stepper_rmt_run_steps(stepper_rmt_context_t *ctx, uint32_t uniform_spe
     float homing_rev_per_sec = 0.25f; // You can increase this to 0.5f if you find it too slow
     uint32_t homing_speed_hz = (uint32_t)(table_config->stepper.microsteps_per_rev * homing_rev_per_sec);
     
-    uint32_t chunk_size = (uint32_t)(homing_speed_hz * 0.05f); // Verifica os fins de curso a cada 50 milissegundos
+    uint32_t chunk_size = (uint32_t)(homing_speed_hz * 0.05f); // Checks limit switches every 50 milliseconds
     if (chunk_size < 20) chunk_size = 20;
     rmt_transmit_config_t tx_config = { .loop_count = 0 };
 
@@ -265,7 +265,7 @@ esp_err_t stepper_rmt_run_sine_profile(stepper_rmt_context_t *ctx, float target_
 {
     if (!ctx || !table_config) return ESP_ERR_INVALID_ARG;
 
-    // Prevenir divisões por zero ou crash no driver RMT
+    // Prevent division by zero or RMT driver crash
     if (freq_hz < 0.1f) freq_hz = 0.1f;
     
     float max_p2p = table_config->axis.peak_to_peak_disp_mm; // Typical max displacement (e.g., 33.0mm)
@@ -290,7 +290,7 @@ esp_err_t stepper_rmt_run_sine_profile(stepper_rmt_context_t *ctx, float target_
     // For max P2P (~33mm), the crank-slider mechanism translates continuous rotation into full linear strokes.
     if (target_p2p_mm >= max_p2p - 0.1f) {
         ESP_LOGI(TAG, "Continuous Rotation Mode (Crank-slider naturally actuates the full stroke)");
-        float blend_time_s = 1.0f; // Rampa S-Curve rápida de 0.5 segundos (impercetível mas protege o motor)
+        float blend_time_s = 1.0f; // Fast 0.5 seconds S-Curve ramp (unnoticeable but protects the motor)
         float last_t = 0.0f;
         float current_phase = 0.0f;
         
@@ -301,12 +301,12 @@ esp_err_t stepper_rmt_run_sine_profile(stepper_rmt_context_t *ctx, float target_
             float dt = current_t - last_t;
             last_t = current_t;
             
-            // Rampa S-Curve (mais suave que a linear)
+            // S-Curve Ramp (smoother than linear)
             float t_norm = current_t / blend_time_s;
             float ramp_factor = (t_norm < 1.0f) ? (0.5f * (1.0f - cosf(PI_MATH * t_norm))) : 1.0f;
             float current_freq_hz = freq_hz * ramp_factor;
             
-            // Integração da fase com a frequência atual
+            // Phase integration with current frequency
             if (dt > 0) {
                 current_phase += 2.0f * PI_MATH * current_freq_hz * dt;
             }
@@ -315,13 +315,13 @@ esp_err_t stepper_rmt_run_sine_profile(stepper_rmt_context_t *ctx, float target_
             *target_pos_ptr = pos_mm;
 
             uint32_t speed_hz = (uint32_t)(table_config->stepper.microsteps_per_rev * current_freq_hz);
-            if (speed_hz < 100) speed_hz = 100; // Evitar divisão por zero e garantir chunks rápidos de 10ms
-            uint32_t chunk_steps = speed_hz / 100; // Fragmentos de ~10ms
+            if (speed_hz < 100) speed_hz = 100; // Prevent division by zero and ensure fast 10ms chunks
+            uint32_t chunk_steps = speed_hz / 100; // Chunks of ~10ms
             if (chunk_steps == 0) chunk_steps = 1;
 
             rmt_transmit_config_t tx_config = { .loop_count = 0 };
             
-            // Malloc em vez de VLA na Stack para evitar Stack Overflow
+            // Malloc instead of VLA on Stack to prevent Stack Overflow
             rmt_symbol_word_t *segment_symbols = malloc(chunk_steps * sizeof(rmt_symbol_word_t));
             if (!segment_symbols) {
                 ESP_LOGE(TAG, "Failed to allocate memory for segment_symbols");
@@ -392,7 +392,7 @@ esp_err_t stepper_rmt_run_sine_profile(stepper_rmt_context_t *ctx, float target_
         rmt_transmit_config_t tx_config = { .loop_count = 0 };
         int q = 0;
 
-        float blend_time_s = 1.0f; // Rampa S-Curve rápida de 0.5 segundos
+        float blend_time_s = 1.0f; // Fast 0.5 seconds S-Curve ramp
         
         // Execute the profile quarter-by-quarter
         while (1) {
@@ -406,7 +406,7 @@ esp_err_t stepper_rmt_run_sine_profile(stepper_rmt_context_t *ctx, float target_
 
             // Check if the test was aborted (STOP button on Nextion sends nextion_profile = 0)
             if (nextion_profile == 0) {
-                ESP_LOGW(TAG, "Sine Profile abortado a meio do ensaio!");
+                ESP_LOGW(TAG, "Sine Profile aborted mid-test!");
                 break;
             }
 
@@ -421,7 +421,7 @@ esp_err_t stepper_rmt_run_sine_profile(stepper_rmt_context_t *ctx, float target_
 
             for (int i = 0; i < num_segments; i++) {
                 float current_segment_t = (float)(esp_timer_get_time() - start_time_us) / 1000000.0f;
-                // Rampa S-Curve
+                // S-Curve Ramp
                 float t_norm = current_segment_t / blend_time_s;
                 float ramp_factor = (t_norm < 1.0f) ? (0.5f * (1.0f - cosf(PI_MATH * t_norm))) : 1.0f;
 
@@ -434,7 +434,7 @@ esp_err_t stepper_rmt_run_sine_profile(stepper_rmt_context_t *ctx, float target_
                 uint32_t steps = q_steps[idx];
                 if (steps > 0 && q_speeds[idx] > 0) {
                     uint32_t current_speed = (uint32_t)(q_speeds[idx] * ramp_factor);
-                    if (current_speed < 100) current_speed = 100; // Evitar bloqueios longos
+                    if (current_speed < 100) current_speed = 100; // Prevent long blockages
                     
                     rmt_symbol_word_t segment_symbols[steps];
                     uint32_t ticks = STEP_MOTOR_RESOLUTION_HZ / current_speed / 2;
@@ -475,9 +475,9 @@ esp_err_t stepper_rmt_run_realtime_sine_profile(stepper_rmt_context_t *ctx, floa
     float phase = 0.0f;
     float last_t = 0.0f;
 
-    // CASE 1: Rotação Contínua (Curso Máximo)
+    // CASE 1: Continuous Rotation (Maximum Amplitude)
     if (target_p2p_mm >= max_p2p - 0.1f) {
-        float smoothed_freq_hz = 0.0f; // Inicializa a zero para criar a rampa de arranque inicial
+        float smoothed_freq_hz = 0.0f; // Initializes to zero to create the initial startup ramp
         
         while (esp_timer_get_time() - start_time_us < duration_us) {
             if (nextion_profile == 0) break;
@@ -487,7 +487,7 @@ esp_err_t stepper_rmt_run_realtime_sine_profile(stepper_rmt_context_t *ctx, floa
             // Map ADC (0-4095) to the configured Frequency range
             float target_freq_hz = min_hz + ((float)adc_val / 4095.0f) * (max_hz - min_hz);
             
-            // Filtro Passa-Baixo Exponencial mais agressivo/rápido (peso de 20% no novo valor)
+            // More aggressive/fast Exponential Low-Pass Filter (20% weight on new value)
             smoothed_freq_hz = (0.2f * target_freq_hz) + (0.8f * smoothed_freq_hz);
             
             float freq_hz = smoothed_freq_hz;
@@ -500,12 +500,12 @@ esp_err_t stepper_rmt_run_realtime_sine_profile(stepper_rmt_context_t *ctx, floa
             *target_pos_ptr = (target_p2p_mm / 2.0f) * sinf(phase);
 
             uint32_t speed_hz = (uint32_t)(table_config->stepper.microsteps_per_rev * freq_hz);
-            if (speed_hz < 100) speed_hz = 100; // Evita divisões por zero e previne bloqueios
+            if (speed_hz < 100) speed_hz = 100; // Prevents division by zero and blockages
             
-            uint32_t chunk_steps = speed_hz / 100; // Fragmentos de ~10ms
+            uint32_t chunk_steps = speed_hz / 100; // Chunks of ~10ms
             if (chunk_steps == 0) chunk_steps = 1;
 
-            // Malloc em vez de VLA na Stack para evitar Stack Overflow no Motor X
+            // Malloc instead of VLA on Stack to prevent Stack Overflow on Motor X
             rmt_symbol_word_t *segment_symbols = malloc(chunk_steps * sizeof(rmt_symbol_word_t));
             if (!segment_symbols) {
                 ESP_LOGE(TAG, "Failed to allocate memory for segment_symbols");
@@ -523,7 +523,7 @@ esp_err_t stepper_rmt_run_realtime_sine_profile(stepper_rmt_context_t *ctx, floa
             free(segment_symbols);
         }
     } 
-    // CASE 2: Oscilação Parcial
+    // CASE 2: Partial Oscillation
     else {
         float r = table_config->axis.max_amplitude_mm;
         float A = target_p2p_mm / 2.0f;
@@ -540,7 +540,7 @@ esp_err_t stepper_rmt_run_realtime_sine_profile(stepper_rmt_context_t *ctx, floa
 
         float accum = 0.0f; // Kept outside the loop to avoid losing inter-quarter precision
         int q = 0;
-        float smoothed_freq_hz = 0.0f; // Inicializa a zero para criar a rampa de arranque inicial
+        float smoothed_freq_hz = 0.0f; // Initializes to zero to create the initial startup ramp
 
         while (1) {
             if (esp_timer_get_time() - start_time_us >= duration_us) break;
@@ -550,11 +550,11 @@ esp_err_t stepper_rmt_run_realtime_sine_profile(stepper_rmt_context_t *ctx, floa
             adc_oneshot_read(adc_handle, adc_chan, &adc_val);
             float target_freq_hz = min_hz + ((float)adc_val / 4095.0f) * (max_hz - min_hz);
             
-            // Filtro Passa-Baixo Exponencial mais agressivo/rápido (peso de 20% no novo valor)
+            // More aggressive/fast Exponential Low-Pass Filter (20% weight on new value)
             smoothed_freq_hz = (0.2f * target_freq_hz) + (0.8f * smoothed_freq_hz);
             
             float freq_hz = smoothed_freq_hz;
-            if (freq_hz < 0.1f) freq_hz = 0.1f; // Evita divisões por zero e previne crash no RMT
+            if (freq_hz < 0.1f) freq_hz = 0.1f; // Prevents division by zero and RMT crash
             
             float T = 1.0f / freq_hz;
             float dt = (T / 4.0f) / num_segments;
@@ -586,7 +586,7 @@ esp_err_t stepper_rmt_run_realtime_sine_profile(stepper_rmt_context_t *ctx, floa
                 int idx = is_decel ? i : (num_segments - 1 - i);
                 uint32_t steps = q_steps[idx];
 
-                // Atualizar o target_pos continuamente
+                // Update target_pos continuously
                 float current_segment_phase = (q * (PI_MATH / 2.0f)) + (((float)i / num_segments) * (PI_MATH / 2.0f));
                 float pos_mm = (target_p2p_mm / 2.0f) * sinf(current_segment_phase);
                 *target_pos_ptr = pos_mm;
@@ -636,7 +636,7 @@ esp_err_t stepper_rmt_run_trapezoidal_freq_profile(stepper_rmt_context_t *ctx, f
     float phase = 0.0f;
     float last_t = 0.0f;
 
-    // Rotação Contínua (Amplitude Máxima)
+    // Continuous Rotation (Maximum Amplitude)
     if (target_p2p_mm >= max_p2p - 0.1f) {
         while (1) {
             int64_t elapsed_us = esp_timer_get_time() - start_time_us;
@@ -657,7 +657,7 @@ esp_err_t stepper_rmt_run_trapezoidal_freq_profile(stepper_rmt_context_t *ctx, f
                 freq_hz = end_freq_hz;
             }
             
-            if (freq_hz < 0.1f) freq_hz = 0.1f; // Prevenir divisão por 0 e limites RMT
+            if (freq_hz < 0.1f) freq_hz = 0.1f; // Prevent division by 0 and RMT limits
             
             float dt_t = t - last_t;
             if (dt_t > 0) phase += 2.0f * PI_MATH * freq_hz * dt_t;
@@ -665,12 +665,12 @@ esp_err_t stepper_rmt_run_trapezoidal_freq_profile(stepper_rmt_context_t *ctx, f
             *target_pos_ptr = (target_p2p_mm / 2.0f) * sinf(phase);
 
             uint32_t speed_hz = (uint32_t)(table_config->stepper.microsteps_per_rev * freq_hz);
-            if (speed_hz < 100) speed_hz = 100; // Garantir chunks rápidos e prevenir divisão por 0
+            if (speed_hz < 100) speed_hz = 100; // Ensure fast chunks and prevent division by 0
             
             uint32_t chunk_steps = speed_hz / 100; // 10ms chunks
             if(chunk_steps == 0) chunk_steps = 1;
 
-            // Malloc em vez de VLA na Stack para evitar Stack Overflow no Motor X
+            // Malloc instead of VLA on Stack to prevent Stack Overflow on Motor X
             rmt_symbol_word_t *segment_symbols = malloc(chunk_steps * sizeof(rmt_symbol_word_t));
             if (!segment_symbols) {
                 ESP_LOGE(TAG, "Failed to allocate memory for segment_symbols");
@@ -688,7 +688,7 @@ esp_err_t stepper_rmt_run_trapezoidal_freq_profile(stepper_rmt_context_t *ctx, f
             free(segment_symbols);
         }
     } 
-    // Oscilação Parcial
+    // Partial Oscillation
     else {
         float r = table_config->axis.max_amplitude_mm;
         float A = target_p2p_mm / 2.0f;
@@ -827,12 +827,12 @@ esp_err_t stepper_rmt_run_multistep_freq_profile(stepper_rmt_context_t *ctx, flo
             *target_pos_ptr = (target_p2p_mm / 2.0f) * sinf(phase);
 
             uint32_t speed_hz = (uint32_t)(table_config->stepper.microsteps_per_rev * freq_hz);
-            if (speed_hz < 100) speed_hz = 100; // Garantir chunks rápidos e prevenir divisão por 0
+            if (speed_hz < 100) speed_hz = 100; // Ensure fast chunks and prevent division by 0
             
             uint32_t chunk_steps = speed_hz / 100; // 10ms chunks
             if (chunk_steps == 0) chunk_steps = 1;
 
-            // Malloc em vez de VLA na Stack para evitar Stack Overflow no Motor X
+            // Malloc instead of VLA on Stack to prevent Stack Overflow on Motor X
             rmt_symbol_word_t *segment_symbols = malloc(chunk_steps * sizeof(rmt_symbol_word_t));
             if (!segment_symbols) {
                 ESP_LOGE(TAG, "Failed to allocate memory for segment_symbols");
@@ -980,12 +980,12 @@ esp_err_t stepper_rmt_run_sweep_profile(stepper_rmt_context_t *ctx, float target
             *target_pos_ptr = (target_p2p_mm / 2.0f) * sinf(phase);
 
             uint32_t speed_hz = (uint32_t)(table_config->stepper.microsteps_per_rev * freq_hz);
-            if (speed_hz < 100) speed_hz = 100; // Garantir chunks rápidos e prevenir divisão por 0
+            if (speed_hz < 100) speed_hz = 100; // Ensure fast chunks and prevent division by 0
 
             uint32_t chunk_steps = speed_hz / 100; // 10ms chunks
             if(chunk_steps == 0) chunk_steps = 1;
 
-            // Malloc em vez de VLA na Stack para evitar Stack Overflow no Motor X
+            // Malloc instead of VLA on Stack to prevent Stack Overflow on Motor X
             rmt_symbol_word_t *segment_symbols = malloc(chunk_steps * sizeof(rmt_symbol_word_t));
             if (!segment_symbols) {
                 ESP_LOGE(TAG, "Failed to allocate memory for segment_symbols");
@@ -1084,10 +1084,10 @@ esp_err_t stepper_rmt_run_sweep_profile(stepper_rmt_context_t *ctx, float target
 }
 
 // ========================================================================
-// FUNÇÕES AUXILIARES PARA O CASE 6 (LEITURA DE FICHEIROS SÍSMICOS)
+// HELPER FUNCTIONS FOR CASE 6 (SEISMIC FILE READING)
 // =========================================================================
 
-// Procura e devolve o caminho do primeiro ficheiro .bin no disco
+// Searches and returns the path of the first .bin file on disk
 bool get_stored_sismo_file(char* filepath_out, size_t max_len) {
     DIR *dir = opendir("/storage/input");
     if (!dir) return false;
@@ -1105,14 +1105,14 @@ bool get_stored_sismo_file(char* filepath_out, size_t max_len) {
     return found;
 }
 
-// Executa o perfil sísmico a partir do ficheiro
+// Executes the seismic profile from the file
 esp_err_t stepper_rmt_run_file_profile(stepper_rmt_context_t *ctx, const char* filepath, const shake_table_config_t *table_config)
 {
     if (!ctx || !table_config || !filepath) return ESP_ERR_INVALID_ARG;
 
     FILE *f = fopen(filepath, "r");
     if (!f) {
-        ESP_LOGE(TAG, "Falha ao abrir %s", filepath);
+        ESP_LOGE(TAG, "Failed to open %s", filepath);
         return ESP_FAIL;
     }
 
@@ -1133,7 +1133,7 @@ esp_err_t stepper_rmt_run_file_profile(stepper_rmt_context_t *ctx, const char* f
     gpio_set_level(ctx->gpio_en, STEP_MOTOR_ENABLE_LEVEL);
     vTaskDelay(pdMS_TO_TICKS(50));
 
-    // O motor mecanicamente inicia no centro após o Homing (correspondente a 90 graus nas nossas contas)
+    // The motor mechanically starts at the center after Homing (corresponding to 90 degrees in our math)
     float current_angle = 90.0f;
     int32_t current_step = (int32_t)roundf((current_angle / 360.0f) * table_config->stepper.microsteps_per_rev);
     
@@ -1167,7 +1167,7 @@ esp_err_t stepper_rmt_run_file_profile(stepper_rmt_context_t *ctx, const char* f
                 ESP_LOGI(TAG, "Time: %5.3fs | Pos: %7.4f mm | Angle: %6.2f deg", current_time_s, target_pos_mm, target_angle);
             }
 
-            // 2. Executar Movimento
+            // 2. Execute Movement
             if (delta_steps != 0) {
                 bool is_cw = (delta_steps > 0);
                 gpio_set_level(ctx->gpio_dir, is_cw ? STEP_MOTOR_SPIN_DIR_CLOCKWISE : STEP_MOTOR_SPIN_DIR_COUNTERCLOCKWISE);
@@ -1247,8 +1247,8 @@ void stepper_rmt_task_1(void *arg)
         // }
 
         if (motor1 && current_profile != 0) {
-            motor1_busy = true; // Levanta a bandeira de ocupado
-            set_motor_led(1, true); // Liga o LED no MCP23017 (A0)
+            motor1_busy = true; // Raise the busy flag
+            set_motor_led(1, true); // Turn on the LED on MCP23017 (A0)
 
             switch (current_profile){
                 case 1:
@@ -1282,7 +1282,7 @@ void stepper_rmt_task_1(void *arg)
                         }
                         
                         if (nextion_profile == 1) {
-                            sendAckToNextion(163); // Envia ACK START MOTION na mesma para avisar o HMI
+                            sendAckToNextion(163); // Sends ACK START MOTION anyway to warn the HMI
                         }
                         
                         int64_t start_idle_us = esp_timer_get_time();
@@ -1494,14 +1494,14 @@ void stepper_rmt_task_1(void *arg)
                 
                 // If the profile was not aborted mid-wait, finish it!
                 if (nextion_profile == current_profile) {
-                    nextion_profile = 0; // Limpa o estado
-                    parameters_recv = false; // Rearme obrigatório: bloqueia novos arranques até os dados serem revalidados
+                    nextion_profile = 0; // Clears the state
+                    parameters_recv = false; // Mandatory reset: blocks new starts until data is revalidated
                     ESP_LOGI(TAG, "Test completed successfully! Sending ACK 164 (MOTION END) to HMI.");
                     sendAckToNextion(164);
                 }
             }
         }
-        set_motor_led(1, false); // Apaga o LED no MCP23017 (A0)
+        set_motor_led(1, false); // Turns off the LED on MCP23017 (A0)
         // Essential delay to yield CPU to other tasks when idle
         vTaskDelay(pdMS_TO_TICKS(10));
     }
@@ -1541,8 +1541,8 @@ void stepper_rmt_task_2(void *arg)
         // }
 
         if (motor2 && current_profile != 0) {
-            motor2_busy = true; // Levanta a bandeira de ocupado
-            set_motor_led(2, true); // Liga o LED no MCP23017 (A1)
+            motor2_busy = true; // Raise the busy flag
+            set_motor_led(2, true); // Turn on the LED on MCP23017 (A1)
             
             switch (current_profile){
                 case 1:
@@ -1770,7 +1770,7 @@ void stepper_rmt_task_2(void *arg)
                 }
             }
         }
-        set_motor_led(2, false); // Apaga o LED no MCP23017 (A1)
+        set_motor_led(2, false); // Turns off the LED on MCP23017 (A1)
         // Essential delay to yield CPU to other tasks when idle
         vTaskDelay(pdMS_TO_TICKS(10));
     }

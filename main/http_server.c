@@ -13,18 +13,18 @@
 #define TAG "Funcoes"
 
 // ========================
-// Handler para Upload de Ficheiros
+// File Upload Handler
 // ========================
 esp_err_t upload_handler(httpd_req_t *req) {
     char filename[128];
     char filepath[512];
     
-    // 1. Obter nome do ficheiro enviado pelo Browser via Header HTTP
+    // 1. Get the file name sent by the Browser via HTTP Header
     if (httpd_req_get_hdr_value_str(req, "X-File-Name", filename, sizeof(filename)) != ESP_OK) {
-        strcpy(filename, "upload.bin"); // Fallback caso o browser não envie
+        strcpy(filename, "upload.bin"); // Fallback if browser doesn't send
     }
 
-    // 2. Apagar ficheiros antigos na pasta input para não acumular lixo
+    // 2. Delete old files in input folder to prevent garbage accumulation
     DIR *dir = opendir("/storage/input");
     if (dir) {
         struct dirent *ent;
@@ -38,11 +38,11 @@ esp_err_t upload_handler(httpd_req_t *req) {
         closedir(dir);
     }
 
-    // 3. Abrir novo ficheiro para escrita com o nome original
+    // 3. Open new file for writing with original name
     snprintf(filepath, sizeof(filepath), "/storage/input/%s", filename);
     FILE *fd = fopen(filepath, "w");
     if (!fd) {
-        ESP_LOGE(TAG, "Falha ao criar o ficheiro %s", filepath);
+        ESP_LOGE(TAG, "Failed to create file %s", filepath);
         //nextion_notify_upload_error();
         sendAckToNextion(311); // ACK: Error during file upload
         httpd_resp_send_500(req);
@@ -56,29 +56,29 @@ esp_err_t upload_handler(httpd_req_t *req) {
     while (remaining > 0) {
         if ((received = httpd_req_recv(req, buf, MIN(remaining, sizeof(buf)))) <= 0) {
             if (received == HTTPD_SOCK_ERR_TIMEOUT) {
-                continue; // Tenta novamente
+                continue; // Try again
             }
             fclose(fd);
             //nextion_notify_upload_error();
             sendAckToNextion(311); // ACK: Error during file upload
-            ESP_LOGE(TAG, "Erro ao receber ficheiro durante o upload!");
+            ESP_LOGE(TAG, "Error receiving file during upload!");
             httpd_resp_send_500(req);
             return ESP_FAIL;
         }
-        // Escrever o bloco de dados recebido diretamente no disco (LittleFS)
+        // Write the received data block directly to disk (LittleFS)
         fwrite(buf, 1, received, fd);
         remaining -= received;
     }
     fclose(fd);
     //nextion_notify_upload_success();
-    sendAckToNextion(310); // ACK: Upload concluido com sucesso
-    ESP_LOGI(TAG, "Upload concluido com sucesso. Tamanho recebido: %d bytes", req->content_len);
+    sendAckToNextion(310); // ACK: Upload successfully completed
+    ESP_LOGI(TAG, "Upload successfully completed. Size received: %d bytes", req->content_len);
     httpd_resp_sendstr(req, "Ficheiro guardado no ESP32 com sucesso!");
     return ESP_OK;
 }
 
 // ========================
-// Handler para Info do Ficheiro
+// File Info Handler
 // ========================
 esp_err_t fileinfo_handler(httpd_req_t *req) {
     char resp[256];
@@ -88,7 +88,7 @@ esp_err_t fileinfo_handler(httpd_req_t *req) {
     long filesize = 0;
     bool exists = false;
 
-    // Procurar o primeiro ficheiro presente na memória
+    // Search for the first file present in memory
     if (dir) {
         while ((ent = readdir(dir)) != NULL) {
             if (strcmp(ent->d_name, ".") != 0 && strcmp(ent->d_name, "..") != 0) {
@@ -114,7 +114,7 @@ esp_err_t fileinfo_handler(httpd_req_t *req) {
 }
 
 // ========================
-// Página HTML principal
+// Main HTML Page
 // ========================
 esp_err_t index_handler(httpd_req_t *req) {
     const char *html =
@@ -227,15 +227,15 @@ esp_err_t index_handler(httpd_req_t *req) {
 }
 
 // ========================
-// Inicia o servidor HTTP
+// Starts the HTTP server
 // ========================
 httpd_handle_t start_webserver(void) {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.stack_size = 8192; // Aumentar a stack do servidor web para evitar overflow
+    config.stack_size = 8192; // Increase web server stack to prevent overflow
     httpd_handle_t server = NULL;
 
     if (httpd_start(&server, &config) == ESP_OK) {
-        // Rota da página principal
+        // Main page route
         httpd_uri_t index_uri = {
             .uri = "/",
             .method = HTTP_GET,
@@ -244,7 +244,7 @@ httpd_handle_t start_webserver(void) {
         };
         httpd_register_uri_handler(server, &index_uri);
 
-        // Rota de Upload
+        // Upload route
         httpd_uri_t upload_uri = {
             .uri = "/upload",
             .method = HTTP_POST,
@@ -253,7 +253,7 @@ httpd_handle_t start_webserver(void) {
         };
         httpd_register_uri_handler(server, &upload_uri);
 
-        // Rota de Info do Ficheiro
+        // File Info route
         httpd_uri_t fileinfo_uri = {
             .uri = "/fileinfo",
             .method = HTTP_GET,
@@ -262,9 +262,9 @@ httpd_handle_t start_webserver(void) {
         };
         httpd_register_uri_handler(server, &fileinfo_uri);
 
-        ESP_LOGI(TAG, "Servidor HTTP iniciado!");
+        ESP_LOGI(TAG, "HTTP server started!");
     } else {
-        ESP_LOGE(TAG, "Falha ao iniciar servidor HTTP!");
+        ESP_LOGE(TAG, "Failed to start HTTP server!");
     }
     return server;
 }

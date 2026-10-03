@@ -48,7 +48,7 @@ void l298n_set_min_step_us(uint32_t min_us)
 }
 
 // ---------------------------------------------------
-// MOVIMENTO HALF-STEP SIMPLES
+// SIMPLE HALF-STEP MOVEMENT
 // ---------------------------------------------------
 void l298n_move_halfsteps(uint32_t halfsteps, float freq_hz, bool direction)
 {
@@ -74,7 +74,7 @@ void l298n_move_halfsteps(uint32_t halfsteps, float freq_hz, bool direction)
 
 
 // ---------------------------------------------------
-// MOVIMENTO TRAPEZOIDAL
+// TRAPEZOIDAL MOVEMENT
 // ---------------------------------------------------
 void l298n_move_trapezoidal(uint32_t total_steps,
                             float start_hz,
@@ -103,7 +103,7 @@ void l298n_move_trapezoidal(uint32_t total_steps,
         float t = (float)i / accel_steps; // t goes from 0 to 1 (multiplication factor)
         float freq = start_hz + t * (cruise_hz - start_hz); // freq increases from start_hz to cruise_hz
 
-        if (freq < 0.1f) freq = 0.1f; // Prevenir divisão por 0
+        if (freq < 0.1f) freq = 0.1f; // Prevent division by 0
 
         float step_us_f = 1e6f / freq; // Time per step in microseconds
         if (step_us_f < g_min_step_us) step_us_f = g_min_step_us; // enforce minimum step time
@@ -131,7 +131,7 @@ void l298n_move_trapezoidal(uint32_t total_steps,
         float t = (float)i / decel_steps; // t goes from 0 to 1 (multiplication factor)
         float freq = cruise_hz + t * (end_hz - cruise_hz); // freq decreases from cruise_hz to end_hz
 
-        if (freq < 0.1f) freq = 0.1f; // Prevenir divisão por 0
+        if (freq < 0.1f) freq = 0.1f; // Prevent division by 0
 
         float step_us_f = 1e6f / freq; // Time per step in microseconds
         if (step_us_f < g_min_step_us) step_us_f = g_min_step_us; // enforce minimum step time
@@ -144,7 +144,7 @@ void l298n_move_trapezoidal(uint32_t total_steps,
 
 
 // ---------------------------------------------------
-// EXECUÇÃO DE PERFIL SÍSMICO
+// SEISMIC PROFILE EXECUTION
 // ---------------------------------------------------
 void l298n_play_seismic_profile(const seismic_profile_t *profile, bool direction)
 {
@@ -176,22 +176,22 @@ void stepper_task(void *arg)
 {
     for(;;)
     {
-        // Espera que o botão seja premido
+        // Wait for button press
         ESP_LOGI("STEPMOTOR", "Press button to Step Motor Test start...");
         while (gpio_get_level(GPIO_NUM_14) == 1) {
             vTaskDelay(pdMS_TO_TICKS(10));
         }
-        vTaskDelay(pdMS_TO_TICKS(50)); // Anti-bounce simples
+        vTaskDelay(pdMS_TO_TICKS(50)); // Simple anti-bounce
 
         // ---------------------------------------------------
-        // 1) Mover 2000 halfsteps a 800 Hz
+        // 1) Move 2000 halfsteps at 800 Hz
         // ---------------------------------------------------
         ESP_LOGI("STEPMOTOR", "Move 2000 halfsteps at 800 Hz");
         l298n_move_halfsteps(2000, 800, true);
-        vTaskDelay(pdMS_TO_TICKS(2000)); // Delay de 2 segundos
+        vTaskDelay(pdMS_TO_TICKS(2000)); // 2 second delay
 
         // ---------------------------------------------------
-        // 2) Movimento trapezoidal
+        // 2) Trapezoidal movement
         // ---------------------------------------------------
         ESP_LOGI("STEPMOTOR", "Trapezoidal move: 4000 halfsteps, 200->1200->200 Hz, 300ms accel/decel");
         l298n_move_trapezoidal(
@@ -203,10 +203,10 @@ void stepper_task(void *arg)
             0.3f,       // ramp down 300ms
             true
         );
-        vTaskDelay(pdMS_TO_TICKS(2000)); // Delay de 2 segundos
+        vTaskDelay(pdMS_TO_TICKS(2000)); // 2 second delay
 
         // ---------------------------------------------------
-        // 3) Perfil sísmico
+        // 3) Seismic profile
         // ---------------------------------------------------
         ESP_LOGI("STEPMOTOR", "Seismic profile move");
         static const float speeds[]   = {300, 800, 1200, 400, 200};

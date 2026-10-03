@@ -5,7 +5,7 @@
 
 static const char *TAG = "CONFIG_MANAGER";
 
-// Definição das estruturas de configuração globais
+// Definition of global configuration structures
 shake_table_config_t table_config_x;
 shake_table_config_t table_config_y;
 
@@ -40,7 +40,7 @@ static esp_err_t load_float(nvs_handle_t handle, const char* key, float* value, 
     return err;
 }
 
-// Função auxiliar para carregar um u16 da NVS
+// Helper function to load a u16 from NVS
 static esp_err_t load_u16(nvs_handle_t handle, const char* key, uint16_t* value, uint16_t default_val) {
     esp_err_t err = nvs_get_u16(handle, key, value);
     if (err == ESP_ERR_NVS_NOT_FOUND) {

@@ -46,7 +46,7 @@ void start_wifi_ap(void)
     ESP_LOGI("WiFi_AP", "Access Point started! SSID: %s, Password: %s", WIFI_AP_SSID, WIFI_AP_PASS);
 }*/
 
-// Versao 2 -----------------------
+// Version 2 -----------------------
 #define WIFI_AP_SSID "ESP32_ShakeTable"
 #define WIFI_AP_PASS "12345678"
 static const char *TAG = "WiFi_AP";
@@ -70,7 +70,7 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
 }
 
 void start_wifi_ap(void) {
-    // 1️⃣ Inicializa NVS
+    // 1️⃣ Initialize NVS
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
@@ -78,14 +78,14 @@ void start_wifi_ap(void) {
     }
     ESP_ERROR_CHECK(ret);
 
-    // 2️⃣ Inicializa TCP/IP stack
+    // 2️⃣ Initialize TCP/IP stack
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
                                                       &wifi_event_handler, NULL, NULL));
     esp_netif_create_default_wifi_ap();
 
-    // 3️⃣ Inicializa Wi-Fi
+    // 3️⃣ Initialize Wi-Fi
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
@@ -107,5 +107,5 @@ void start_wifi_ap(void) {
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
 
-    ESP_LOGI(TAG, "Access Point iniciado! SSID: %s, IP: 192.168.4.1", WIFI_AP_SSID);
+    ESP_LOGI(TAG, "Access Point started! SSID: %s, IP: 192.168.4.1", WIFI_AP_SSID);
 }

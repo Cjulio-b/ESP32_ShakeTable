@@ -25,7 +25,7 @@ bool MonitorTask = false;
 #define RXD_PIN (16)
 #define UART_BAUD_RATE (9600)
 #define UART_PORT UART_NUM_1
-#define DEBUG_UART // ativar apenas para debug, comentar para desativar
+#define DEBUG_UART // enable only for debug, comment to disable
 
 void init_uart_to_Nextion(void)
 {
@@ -59,7 +59,7 @@ void init_uart_to_mcu2(void)
     ESP_ERROR_CHECK(uart_driver_install(UART_TELEMETRY_NUM, 1024, 0, 0, NULL, 0));
     ESP_ERROR_CHECK(uart_param_config(UART_TELEMETRY_NUM, &uart_telemetry_config));
     ESP_ERROR_CHECK(uart_set_pin(UART_TELEMETRY_NUM, UART_TELEMETRY_TX_PIN, UART_TELEMETRY_RX_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
-    gpio_set_pull_mode(UART_TELEMETRY_RX_PIN, GPIO_PULLUP_ONLY); // Evita ruído quando cabo está desligado
+    gpio_set_pull_mode(UART_TELEMETRY_RX_PIN, GPIO_PULLUP_ONLY); // Prevents noise when cable is disconnected
     ESP_LOGI(TAG2, "Telemetry UART initialized on UART%d (TX=%d, RX=%d, 115200 baud)", UART_TELEMETRY_NUM, UART_TELEMETRY_TX_PIN, UART_TELEMETRY_RX_PIN);
 }
 
@@ -81,7 +81,7 @@ void tx_task(void *arg)
         vTaskDelay(2000 / portTICK_PERIOD_MS); */
 
         txToNextion();
-        vTaskDelay(500 / portTICK_PERIOD_MS); // Envia a cada 500ms
+        vTaskDelay(500 / portTICK_PERIOD_MS); // Sends every 500ms
     }
 }
 
@@ -114,7 +114,7 @@ void telemetry_rx_task(void *arg)
         if (rxBytes > 0) {
             data[rxBytes] = 0; // null terminate
             
-            // Verifica os comandos ASCII recebidos do MCU2
+            // Checks ASCII commands received from MCU2
             if (strstr((const char*)data, "WIFI_OK")) {
                 sendAckToNextion(301); // ACK WIFI CONNECTED
                 ESP_LOGI(TEL_RX_TAG, "Feedback MCU2 -> WIFI_OK -> Notified Nextion!");
@@ -147,6 +147,6 @@ void monitor_task(void *arg)
 
             MonitorTask = false;
         }
-        vTaskDelay(pdMS_TO_TICKS(500)); // atualiza a cada 0,5 segundos
+        vTaskDelay(pdMS_TO_TICKS(500)); // updates every 0.5 seconds
     }
 }

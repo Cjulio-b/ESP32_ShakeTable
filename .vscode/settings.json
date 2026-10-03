@@ -1,5 +1,5 @@
 {
-    "idf.portWin": "COM3",
     "idf.monitorPort": "COM3",
-    "idf.currentSetup": "c:\\Users\\cjulio\\esp\\v5.5.1\\esp-idf"
+    "idf.currentSetup": "c:\\Users\\cjulio\\esp\\v5.5.1\\esp-idf",
+    "idf.port": "COM3"
 }
